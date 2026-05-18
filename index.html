@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <meta name="theme-color" content="#0b1118"/>
+
+  <title>RinkRosters &mdash; Hockey Roster &amp; Line Builder</title>
+  <meta name="description" content="Build hockey forward lines, defensive pairs, special teams units and goalie depth charts. Free top-down rink for coaches. 3v3, 4v4 and 5v5."/>
+  <meta name="keywords" content="hockey lines, roster builder, line chart, NHL rink, power play, penalty kill, coach tool"/>
+  <meta name="author" content="RinkRosters"/>
+  <meta name="robots" content="index, follow"/>
+  <link rel="canonical" href="https://rinkrosters.com"/>
+
+  <meta property="og:type" content="website"/>
+  <meta property="og:url" content="https://rinkrosters.com"/>
+  <meta property="og:title" content="RinkRosters &mdash; Hockey Roster &amp; Line Builder"/>
+  <meta property="og:description" content="Build forward lines, D pairs, PP and PK units. Free top-down rink for coaches."/>
+  <meta property="og:site_name" content="RinkRosters"/>
+
+  <meta name="twitter:card" content="summary"/>
+  <meta name="twitter:url" content="https://rinkrosters.com"/>
+  <meta name="twitter:title" content="RinkRosters &mdash; Hockey Line Builder"/>
+  <meta name="twitter:description" content="Build forward lines, D pairs, PP and PK units. Free top-down rink for coaches."/>
+
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="RinkRosters"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root {
+      height: 100%;
+      width: 100%;
+      background: #0b1118;
+      color: #e7eef7;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      overflow: hidden;
+    }
+    input, button, select, textarea {
+      font: inherit;
+      color: inherit;
+    }
+    #splash {
+      position: fixed; inset: 0;
+      background: #0b1118;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 14px;
+      z-index: 9999;
+      transition: opacity 0.35s ease;
+    }
+    #splash.hidden { opacity: 0; pointer-events: none; }
+    #splash-logo {
+      font-size: 26px; font-weight: 700;
+      letter-spacing: 0.08em;
+    }
+    #splash-logo .mark { color: #4cc2ff; }
+    #splash-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: #4cc2ff;
+      animation: pulse 1s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.3; transform: scale(0.8); }
+      50% { opacity: 1; transform: scale(1.2); }
+    }
+  </style>
+</head>
+<body>
+  <div id="splash">
+    <div style="font-size:32px">&#x1F3D2;</div>
+    <div id="splash-logo"><span class="mark">RINK</span>ROSTERS</div>
+    <div id="splash-dot"></div>
+  </div>
+
+  <div id="root"></div>
+
+  <script>
+    (function(){
+      var hide = function(){
+        var s = document.getElementById('splash');
+        if (s) { s.classList.add('hidden'); setTimeout(function(){ if (s.parentNode) s.parentNode.removeChild(s); }, 500); }
+      };
+      var root = document.getElementById('root');
+      var mo = new MutationObserver(function(){ if (root.childNodes.length > 0) { mo.disconnect(); hide(); } });
+      mo.observe(root, { childList: true });
+      setTimeout(hide, 4000);
+    })();
+  </script>
+
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>
