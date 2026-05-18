@@ -202,6 +202,7 @@ export default function RinkRostersApp() {
   const rosterRef = useRef(null)
   const [pickerFor, setPickerFor] = useState(null) // 'jerseyPrimary' | 'jerseySecondary' | 'number' | 'ice' | null
   const [editPlayerId, setEditPlayerId] = useState(null) // open the edit modal for this player
+  const [actionMenu, setActionMenu] = useState(null) // { source, playerId, x, y } — tap on a rink chip
   const [importErr, setImportErr] = useState('')
   const fileInputRef = useRef(null)
 
@@ -408,9 +409,11 @@ export default function RinkRostersApp() {
     setHoverSlot(null)
 
     // Tap (no movement) on a bench player opens the edit modal; on a rink
-    // chip it clears the slot. Drag (moved) commits the drop.
+    // chip it opens a small action menu (Edit / Remove / Cancel). Drag
+    // (moved) commits the drop and is handled below.
     if (!d.moved) {
       if (d.source.kind === 'BENCH') setEditPlayerId(d.playerId)
+      else setActionMenu({ source: d.source, playerId: d.playerId, x: pt.x, y: pt.y })
       return
     }
 
@@ -675,6 +678,23 @@ export default function RinkRostersApp() {
           onClose={() => setEditPlayerId(null)}
         />
       )}
+
+      {/* Rink-chip action menu */}
+      {actionMenu && (() => {
+        const p = playerById(actionMenu.playerId)
+        if (!p) return null
+        return (
+          <ActionMenu
+            player={p}
+            colors={colors}
+            x={actionMenu.x}
+            y={actionMenu.y}
+            onEdit={() => { setEditPlayerId(actionMenu.playerId); setActionMenu(null) }}
+            onRemove={() => { clearSlot(actionMenu.source); setActionMenu(null) }}
+            onClose={() => setActionMenu(null)}
+          />
+        )
+      })()}
     </div>
   )
 }
@@ -1277,6 +1297,48 @@ function ColorPopover({ target, value, onPick, onClose }) {
           <input type="text" value={value} onChange={(e) => onPick(e.target.value)}
             style={{ flex: 1, padding: '4px 6px', background: '#0b1118', color: '#cbd5e1', border: '1px solid #1f2937', borderRadius: 4, fontSize: 12 }} />
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Action menu (fires when a rink chip is tapped — gives Edit / Remove / Cancel)
+// ════════════════════════════════════════════════════════════════════════════
+function ActionMenu({ player, colors, x, y, onEdit, onRemove, onClose }) {
+  const W = 200, H = 168, GAP = 14
+  const left = Math.max(8, Math.min((typeof window !== 'undefined' ? window.innerWidth : 800) - W - 8, x - W / 2))
+  const top  = Math.max(8, Math.min((typeof window !== 'undefined' ? window.innerHeight : 600) - H - 8, y + GAP))
+  const btn = {
+    width: '100%', padding: '10px 12px', textAlign: 'left',
+    background: '#0b1118', color: '#e2e8f0',
+    border: '1px solid #1f2937', borderRadius: 6,
+    fontSize: 13, fontWeight: 600, cursor: 'pointer',
+  }
+  return (
+    <div onMouseDown={onClose} onTouchStart={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.25)', zIndex: 200 }}>
+      <div onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}
+        style={{
+          position: 'absolute', left, top, width: W,
+          background: '#0e1722', border: '1px solid #1f2937', borderRadius: 10,
+          padding: 10, boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
+          display: 'flex', flexDirection: 'column', gap: 6,
+        }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 4px 6px', borderBottom: '1px solid #1f2937', marginBottom: 4 }}>
+          <JerseyChip player={player} colors={colors} size={32} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {player.name || 'Unnamed'}
+            </div>
+            <div style={{ fontSize: 10, color: '#94a3b8' }}>
+              #{player.number || '—'} · {player.handedness}
+            </div>
+          </div>
+        </div>
+        <button onClick={onEdit} style={btn}>Edit player</button>
+        <button onClick={onRemove} style={{ ...btn, color: '#fca5a5', borderColor: '#7f1d1d' }}>Remove from slot</button>
+        <button onClick={onClose} style={{ ...btn, color: '#94a3b8' }}>Cancel</button>
       </div>
     </div>
   )
