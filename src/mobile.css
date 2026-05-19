@@ -1,0 +1,35 @@
+/* Mobile-only safe-area and Visual Viewport rules for RinkRosters.
+   Imported from src/main.jsx so Vite bundles it on every build.
+
+   Breakpoint must match the JS branch at RinkRostersApp.jsx (`screen.width <
+   880`) — drift would create a 768–879px dead zone where layout and styling
+   disagree. (Note: `screen.width` is the device's physical screen, not the
+   viewport; that's a pre-existing mismatch worth fixing separately.)
+
+   --vv-offset is set on :root by a useEffect that subscribes to
+   window.visualViewport. When Safari's bottom toolbar collapses on scroll, or
+   the soft keyboard opens, the bar rides the chrome instead of leaving a
+   dead gap (or sitting under it). Falls back to 0 when the API is absent. */
+
+@media (max-width: 879px) {
+  .rr-mob-sidebar {
+    padding-bottom: calc(max(env(safe-area-inset-bottom, 0px), 28px) + var(--vv-offset, 0px));
+  }
+  .is-android .rr-mob-sidebar {
+    padding-bottom: calc(max(env(safe-area-inset-bottom, 0px), 36px) + var(--vv-offset, 0px));
+  }
+  .is-ios .rr-mob-sidebar {
+    padding-bottom: calc(max(env(safe-area-inset-bottom, 0px), 42px) + var(--vv-offset, 0px));
+  }
+
+  /* Scoped to .rr-mob-chip (header tabs, non-draggable controls) — not
+     draggable elements, which already set touch-action: none in RinkRostersApp
+     line ~1184. Mixing the two breaks the pointer-based drag system. */
+  .rr-mob-chip {
+    touch-action: manipulation;
+  }
+
+  .rr-mob-header {
+    padding-top: max(env(safe-area-inset-top, 0px), 8px);
+  }
+}

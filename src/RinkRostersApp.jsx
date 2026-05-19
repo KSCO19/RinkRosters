@@ -1,5 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+// ─── UA flags (mobile safe-area + Visual Viewport tuning) ──────────────────
+// Used by the body-class useEffect below so mobile.css can layer per-platform
+// padding floors on .rr-mob-sidebar. Same pattern as FCRoster.
+const IS_FIREFOX = typeof navigator !== 'undefined' && /firefox/i.test(navigator.userAgent || '')
+const IS_ANDROID = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent || '')
+const IS_IOS     = typeof navigator !== 'undefined'
+  && /iPad|iPhone|iPod/.test(navigator.userAgent || '')
+  && !(typeof window !== 'undefined' && window.MSStream)
+
 // ─── NHL rink geometry (top-down, ft) ─────────────────────────────────────────
 // Rink is 200×85 with 28-ft corner radius. Coordinates use feet so positioning
 // math reads like NHL diagrams: red line at x=100, blue lines at 75 / 125,
@@ -191,6 +200,44 @@ export default function RinkRostersApp() {
   const [state, setState] = useState(loadState)
   const stateRef = useRef(state)
   useEffect(() => { stateRef.current = state; saveState(state) }, [state])
+
+  // Body-class flags so mobile.css can scope per-platform overrides on
+  // .rr-mob-sidebar et al. Android Chrome reports env(safe-area-inset-bottom)
+  // as 0 even with the gesture nav bar present, and iOS Safari reports 0 when
+  // its bottom toolbar is shown — the class-scoped floors compensate.
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const root = document.documentElement
+    if (IS_FIREFOX) root.classList.add('is-firefox')
+    if (IS_ANDROID) root.classList.add('is-android')
+    if (IS_IOS)     root.classList.add('is-ios')
+    if (navigator && navigator.brave && typeof navigator.brave.isBrave === 'function') {
+      navigator.brave.isBrave().then((yes) => { if (yes) root.classList.add('is-brave') }).catch(() => {})
+    }
+  }, [])
+
+  // Visual Viewport offset: how many CSS pixels the browser chrome (Safari's
+  // collapsing bottom bar, soft keyboard, etc.) is currently eating from the
+  // layout viewport. Exposed as --vv-offset so .rr-mob-sidebar rides the
+  // chrome instead of leaving a dead gap. Defaults to 0 when the API is
+  // absent (older Firefox / older Android Chrome).
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const vv = window.visualViewport
+    if (!vv) return
+    const root = document.documentElement
+    const update = () => {
+      const offset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
+      root.style.setProperty('--vv-offset', offset + 'px')
+    }
+    vv.addEventListener('resize', update)
+    vv.addEventListener('scroll', update)
+    update()
+    return () => {
+      vv.removeEventListener('resize', update)
+      vv.removeEventListener('scroll', update)
+    }
+  }, [])
 
   // Drag is owned by refs (avoid re-rendering 60×/sec on pointermove); only
   // the lightweight dragGhost / hover state goes through React.
@@ -747,7 +794,7 @@ function Header({ view, format, onView, onFormat, onExportPng, onExportJson, onI
     borderRadius: 6, cursor: 'pointer', fontSize: 12,
   }
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid #1f2937', flexWrap: 'wrap' }}>
+    <div className="rr-mob-header" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid #1f2937', flexWrap: 'wrap' }}>
       <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: 0.5, marginRight: 8 }}>
         <span style={{ color: '#4cc2ff' }}>RINK</span>ROSTERS
       </div>
@@ -1127,7 +1174,7 @@ function Sidebar({ mobile, innerRef, roster, lines, view, colors, hoverBench, dr
     ? { width: '100%', height: '40%', borderTop: '1px solid #1f2937' }
     : { width: 340, borderLeft: '1px solid #1f2937' }
   return (
-    <div ref={innerRef} style={{
+    <div ref={innerRef} className={mobile ? 'rr-mob-sidebar' : undefined} style={{
       ...wrap,
       background: hoverBench && dragPlayerId ? '#0e2030' : '#0b1118',
       transition: 'background 0.15s',
