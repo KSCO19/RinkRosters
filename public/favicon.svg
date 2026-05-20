@@ -1,0 +1,28 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#13243a"/>
+      <stop offset="1" stop-color="#0b1118"/>
+    </linearGradient>
+  </defs>
+  <!-- App background (rounded for SVG slots; rasterized icons sit on a matching
+       dark page so the corners read as a seamless full-bleed square). -->
+  <rect width="512" height="512" rx="112" fill="#0b1118"/>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- Vertical mini-rink mark (mirrors the app's portrait mobile rink) -->
+  <g>
+    <rect x="132" y="70" width="248" height="372" rx="78" fill="#0e1a28" stroke="#4cc2ff" stroke-width="11"/>
+    <!-- blue lines -->
+    <line x1="132" y1="196" x2="380" y2="196" stroke="#3b82f6" stroke-width="6" opacity="0.85"/>
+    <line x1="132" y1="316" x2="380" y2="316" stroke="#3b82f6" stroke-width="6" opacity="0.85"/>
+    <!-- center red line -->
+    <line x1="132" y1="256" x2="380" y2="256" stroke="#ff4d4d" stroke-width="9"/>
+    <!-- center faceoff -->
+    <circle cx="256" cy="256" r="38" fill="none" stroke="#4cc2ff" stroke-width="7"/>
+    <circle cx="256" cy="256" r="6" fill="#4cc2ff"/>
+    <!-- two roster chips, attacking zone (top) -->
+    <circle cx="206" cy="132" r="20" fill="#4cc2ff"/>
+    <circle cx="306" cy="132" r="20" fill="#e2e8f0"/>
+  </g>
+</svg>

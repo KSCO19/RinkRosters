@@ -77,13 +77,18 @@ const POSITIONS = ['C', 'LW', 'RW', 'LD', 'RD', 'G']
 const POSITION_FAMILY = { C: 'F', LW: 'F', RW: 'F', LD: 'D', RD: 'D', G: 'G' }
 
 const STORAGE_KEY = 'rinkrosters.v1'
+const TEAMS_KEY = 'rinkrosters.teams.v1'
+
+// Fixed ice tint — no longer user-configurable (jersey-only color model).
+const ICE_FILL = '#eaf2fb'
+// SVG margin (ft) around the rink inside the viewBox; shared by render + hit-test.
+const RINK_M = 4
 
 // ─── Defaults ─────────────────────────────────────────────────────────────────
+// Only the jersey color is user-chosen. Number + trim are derived from it via
+// readableOn() for guaranteed contrast; ice is fixed (ICE_FILL).
 const DEFAULT_COLORS = {
-  jerseyPrimary: '#1d4ed8',   // royal blue
-  jerseySecondary: '#f8fafc', // trim white
-  number: '#ffffff',
-  ice: '#f4f9ff',
+  jerseyPrimary: '#1d4ed8', // royal blue
 }
 
 function newId() {
@@ -124,6 +129,24 @@ function loadState() {
 }
 function saveState(s) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)) } catch {}
+}
+
+// ── Named local saves ("My Teams") ──────────────────────────────────────────
+// The single autosave above (STORAGE_KEY) is always the live working copy.
+// Named teams are independent snapshots in TEAMS_KEY so a coach can keep more
+// than one roster on the device and swap between them. Cloud/profile sync is a
+// future phase; this is local-only and survives reloads, not device changes.
+function loadTeams() {
+  try {
+    const raw = localStorage.getItem(TEAMS_KEY)
+    const arr = raw ? JSON.parse(raw) : []
+    return Array.isArray(arr) ? arr : []
+  } catch {
+    return []
+  }
+}
+function persistTeams(teams) {
+  try { localStorage.setItem(TEAMS_KEY, JSON.stringify(teams)) } catch {}
 }
 // Tolerate older snapshots / missing fields so a saved state from an earlier
 // build still loads cleanly. New fields fall back to defaults.
@@ -191,7 +214,6 @@ const SWATCHES = [
   '#a16207', '#7c3aed', '#0891b2', '#be123c', '#374151', '#94a3b8',
   '#fef3c7', '#fee2e2', '#e0e7ff', '#dcfce7', '#fae8ff', '#f1f5f9',
 ]
-const ICE_SWATCHES = ['#f4f9ff', '#ffffff', '#e6f0fa', '#d6e6f5', '#fff8e6', '#f5f5f5']
 
 // ════════════════════════════════════════════════════════════════════════════
 // Main app
@@ -247,13 +269,21 @@ export default function RinkRostersApp() {
 
   const rinkRef = useRef(null)
   const rosterRef = useRef(null)
-  const [pickerFor, setPickerFor] = useState(null) // 'jerseyPrimary' | 'jerseySecondary' | 'number' | 'ice' | null
+  const [pickerFor, setPickerFor] = useState(null) // 'jerseyPrimary' | null
   const [editPlayerId, setEditPlayerId] = useState(null) // open the edit modal for this player
   const [actionMenu, setActionMenu] = useState(null) // { source, playerId, x, y } — tap on a rink chip
   const [importErr, setImportErr] = useState('')
+  const [teamsOpen, setTeamsOpen] = useState(false)
+  const [teams, setTeams] = useState(loadTeams)
   const fileInputRef = useRef(null)
 
   const { roster, lines, view, colors, format } = state
+
+  // Mobile → portrait rink. Computed up here (not just at render) so the drag
+  // hit-tester below can invert the rotation when mapping screen → rink coords.
+  const screen = useScreen()
+  const mobile = screen.width < 880
+  const vertical = mobile
 
   // ── Lookup helpers ──────────────────────────────────────────────────────
   const playerById = useCallback((id) => roster.find(p => p.id === id) || null, [roster])
@@ -337,13 +367,14 @@ export default function RinkRostersApp() {
   // ── Slot assignment ─────────────────────────────────────────────────────
   // assignToSlot(target, playerId): place a player into a unit slot. The same
   // player can appear on multiple units (top-line C + PP1 + PK1 is normal).
-  // Returns true if applied, false if ineligible.
+  // Eligibility is a soft guide, not a hard gate: an out-of-position drop is
+  // allowed and flagged with a warning ring on the rink (coaches routinely try
+  // players off their natural spot). Returns true if applied.
   function assignToSlot(target, playerId) {
     const player = playerById(playerId)
     if (!player) return false
     const slot = resolveSlotDef(target)
     if (!slot) return false
-    if (!isEligible(player, slot)) return false
 
     setState(s => {
       const lines = { ...s.lines }
@@ -487,9 +518,21 @@ export default function RinkRostersApp() {
     if (rink) {
       const r = rink.getBoundingClientRect()
       if (pt.x >= r.left && pt.x <= r.right && pt.y >= r.top && pt.y <= r.bottom) {
-        // Map screen→rink coordinates and find the nearest slot center.
-        const x = ((pt.x - r.left) / r.width) * RINK.W
-        const y = ((pt.y - r.top) / r.height) * RINK.H
+        // Map screen→rink coordinates and find the nearest slot center. When the
+        // rink is rendered portrait (vertical), invert the -90° wrapper rotation:
+        // display point (Dx,Dy) came from feet (s.x,s.y) as Dx=s.y+M, Dy=VB_W-(s.x+M).
+        let x, y
+        if (vertical) {
+          const VB_W = RINK.W + RINK_M * 2
+          const VB_H = RINK.H + RINK_M * 2
+          const dispX = ((pt.x - r.left) / r.width) * VB_H
+          const dispY = ((pt.y - r.top) / r.height) * VB_W
+          y = dispX - RINK_M
+          x = VB_W - dispY - RINK_M
+        } else {
+          x = ((pt.x - r.left) / r.width) * RINK.W
+          y = ((pt.y - r.top) / r.height) * RINK.H
+        }
         let best = null, bestD = Infinity
         for (const s of activeUnit.slots) {
           const dx = s.x - x, dy = s.y - y
@@ -538,6 +581,35 @@ export default function RinkRostersApp() {
     }
   }
 
+  // ── Named local saves ("My Teams") ──────────────────────────────────────
+  function commitTeams(next) { setTeams(next); persistTeams(next) }
+  function saveCurrentAsTeam(name) {
+    const team = {
+      id: newId(),
+      name: name.trim() || `Team ${teams.length + 1}`,
+      savedAt: Date.now(),
+      state: JSON.parse(JSON.stringify(stateRef.current)),
+    }
+    commitTeams([team, ...teams])
+  }
+  function overwriteTeam(id) {
+    commitTeams(teams.map(t => t.id === id
+      ? { ...t, savedAt: Date.now(), state: JSON.parse(JSON.stringify(stateRef.current)) }
+      : t))
+  }
+  function loadTeam(id) {
+    const t = teams.find(x => x.id === id)
+    if (!t) return
+    setState(mergeStateShape(t.state))
+    setTeamsOpen(false)
+  }
+  function renameTeam(id, name) {
+    commitTeams(teams.map(t => t.id === id ? { ...t, name: name.trim() || t.name } : t))
+  }
+  function deleteTeam(id) {
+    commitTeams(teams.filter(t => t.id !== id))
+  }
+
   // ── PNG export ──────────────────────────────────────────────────────────
   // Pattern ported from FC-Roster: clone the live SVG, serialize, load via
   // blob URL into an Image, then drawImage onto a canvas with programmatic
@@ -550,11 +622,20 @@ export default function RinkRostersApp() {
     clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
     // Strip all interactive chrome (drop-zone outlines, hover glows) before serializing.
     clone.querySelectorAll('[data-export-strip]').forEach(el => el.remove())
+    // Always export landscape, even when the live rink is portrait on mobile:
+    // neutralize the rotation wrapper + per-chip counter-spins and reset the
+    // viewBox to the landscape frame. Chips are redrawn programmatically below,
+    // so the (now-unrotated) SVG chips underneath don't matter.
+    const M = RINK_M
+    const VB_W = RINK.W + M * 2
+    const VB_H = RINK.H + M * 2
+    clone.setAttribute('viewBox', `0 0 ${VB_W} ${VB_H}`)
+    clone.querySelector('[data-rink-rotate]')?.removeAttribute('transform')
+    clone.querySelectorAll('[data-spin]').forEach(el => el.removeAttribute('transform'))
 
-    const bbox = svg.getBoundingClientRect()
     const SCALE = 2
-    const PW = Math.round(bbox.width * SCALE)
-    const PH = Math.round(bbox.height * SCALE)
+    const PW = Math.round(520 * SCALE)
+    const PH = Math.round(PW * (VB_H / VB_W))
     clone.setAttribute('width', PW)
     clone.setAttribute('height', PH)
 
@@ -621,9 +702,6 @@ export default function RinkRostersApp() {
   }
 
   // ── Render ──────────────────────────────────────────────────────────────
-  const screen = useScreen()
-  const mobile = screen.width < 880
-
   return (
     <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: mobile ? 'column' : 'row', background: '#0b1118' }}>
       {/* Rink area */}
@@ -636,6 +714,7 @@ export default function RinkRostersApp() {
           onExportPng={exportPng}
           onExportJson={exportJson}
           onImportClick={() => fileInputRef.current?.click()}
+          onOpenTeams={() => setTeamsOpen(true)}
           onPickColor={setPickerFor}
           colors={colors}
         />
@@ -647,6 +726,7 @@ export default function RinkRostersApp() {
             filled={activeUnit.filled}
             playerById={playerById}
             colors={colors}
+            vertical={vertical}
             hoverSlot={hoverSlot && hoverSlot.kind === 'RINK_SLOT' ? hoverSlot.slotKey : null}
             dragPlayerId={dragRef.current?.playerId || null}
             isDragEligible={(slotKey) => {
@@ -709,6 +789,20 @@ export default function RinkRostersApp() {
           value={colors[pickerFor]}
           onPick={(c) => { setColor(pickerFor, c); setPickerFor(null) }}
           onClose={() => setPickerFor(null)}
+        />
+      )}
+
+      {/* My Teams (named local saves) */}
+      {teamsOpen && (
+        <TeamsModal
+          teams={teams}
+          rosterCount={roster.length}
+          onSaveNew={saveCurrentAsTeam}
+          onOverwrite={overwriteTeam}
+          onLoad={loadTeam}
+          onRename={renameTeam}
+          onDelete={deleteTeam}
+          onClose={() => setTeamsOpen(false)}
         />
       )}
 
@@ -778,7 +872,7 @@ function useScreen() {
 // ════════════════════════════════════════════════════════════════════════════
 // Header
 // ════════════════════════════════════════════════════════════════════════════
-function Header({ view, format, onView, onFormat, onExportPng, onExportJson, onImportClick, onPickColor, colors }) {
+function Header({ view, format, onView, onFormat, onExportPng, onExportJson, onImportClick, onOpenTeams, onPickColor, colors }) {
   const tabBtn = (label, mode) => (
     <button onClick={() => onView({ mode })}
       style={{
@@ -809,12 +903,10 @@ function Header({ view, format, onView, onFormat, onExportPng, onExportJson, onI
       )}
       <div style={{ flex: 1 }} />
       <ColorChip label="Jersey" value={colors.jerseyPrimary} onClick={() => onPickColor('jerseyPrimary')} />
-      <ColorChip label="Trim"   value={colors.jerseySecondary} onClick={() => onPickColor('jerseySecondary')} />
-      <ColorChip label="Number" value={colors.number} onClick={() => onPickColor('number')} />
-      <ColorChip label="Ice"    value={colors.ice} onClick={() => onPickColor('ice')} />
+      <button onClick={onOpenTeams} style={{ ...btn, color: '#4cc2ff', borderColor: '#1e3a8a' }}>Teams</button>
       <button onClick={onExportPng} style={btn}>PNG</button>
-      <button onClick={onExportJson} style={btn}>Save</button>
-      <button onClick={onImportClick} style={btn}>Load</button>
+      <button onClick={onExportJson} style={btn}>Export</button>
+      <button onClick={onImportClick} style={btn}>Import</button>
     </div>
   )
 }
@@ -881,22 +973,30 @@ function LineSelector({ view, lines, onView }) {
 // ════════════════════════════════════════════════════════════════════════════
 // Rink SVG
 // ════════════════════════════════════════════════════════════════════════════
-function Rink({ innerRef, slots, filled, playerById, colors, hoverSlot, dragPlayerId, isDragEligible, onSlotPointerDown }) {
+function Rink({ innerRef, slots, filled, playerById, colors, hoverSlot, dragPlayerId, isDragEligible, onSlotPointerDown, vertical }) {
   // viewBox uses a small margin around the rink so corner radius and the
-  // boards' stroke have somewhere to live. The aspect ratio is preserved
-  // (rink is 200×85 ft, ~2.35:1) and the SVG fills the container.
-  const M = 4
+  // boards' stroke have somewhere to live. Rink geometry is authored landscape
+  // (200×85 ft, ~2.35:1). On mobile we render portrait by swapping the viewBox
+  // and rotating the whole rink -90° via the wrapper group (attacking zone up),
+  // which fills a phone's tall viewport and makes chips far bigger. Slot/marking
+  // coordinates never change — only the wrapper transform. Chips and slot labels
+  // get a counter-rotation (data-spin) so text stays upright; PNG export strips
+  // both transforms to render landscape regardless of screen (see exportPng).
+  const M = RINK_M
   const VB_W = RINK.W + M * 2
   const VB_H = RINK.H + M * 2
+  const wrap = vertical ? `translate(0 ${VB_W}) rotate(-90)` : undefined
+  const spin = vertical ? ' rotate(90)' : ''
   return (
     <svg
       ref={innerRef}
-      viewBox={`0 0 ${VB_W} ${VB_H}`}
+      viewBox={vertical ? `0 0 ${VB_H} ${VB_W}` : `0 0 ${VB_W} ${VB_H}`}
       preserveAspectRatio="xMidYMid meet"
       style={{ width: '100%', height: '100%', userSelect: 'none', touchAction: 'none' }}
     >
+      <g data-rink-rotate transform={wrap}>
       {/* Boards / ice surface */}
-      <RinkBoards ice={colors.ice} M={M} />
+      <RinkBoards ice={ICE_FILL} M={M} />
       {/* Lines, dots, circles, creases, trapezoids — all NHL-correct */}
       <RinkMarkings M={M} />
 
@@ -922,11 +1022,13 @@ function Rink({ innerRef, slots, filled, playerById, colors, hoverSlot, dragPlay
 
       {/* Empty slot labels (subtle, only when slot is empty) */}
       {slots.map(s => filled[s.key] ? null : (
-        <g key={'lbl-' + s.key} pointerEvents="none">
-          <circle cx={s.x + M} cy={s.y + M} r="5" fill="none" stroke="rgba(11,17,24,0.35)" strokeWidth="0.3" strokeDasharray="1 0.6" />
-          <text x={s.x + M} y={s.y + M + 1.4} textAnchor="middle" fontSize="3.2" fill="rgba(11,17,24,0.55)" style={{ fontFamily: 'system-ui, -apple-system, sans-serif', fontWeight: 700 }}>
-            {s.label}
-          </text>
+        <g key={'lbl-' + s.key} pointerEvents="none" transform={`translate(${s.x + M},${s.y + M})`}>
+          <g data-spin transform={spin || undefined}>
+            <circle cx="0" cy="0" r="5" fill="none" stroke="rgba(11,17,24,0.35)" strokeWidth="0.3" strokeDasharray="1 0.6" />
+            <text x="0" y="1.4" textAnchor="middle" fontSize="3.2" fill="rgba(11,17,24,0.55)" style={{ fontFamily: 'system-ui, -apple-system, sans-serif', fontWeight: 700 }}>
+              {s.label}
+            </text>
+          </g>
         </g>
       ))}
 
@@ -936,16 +1038,23 @@ function Rink({ innerRef, slots, filled, playerById, colors, hoverSlot, dragPlay
         if (!pid) return null
         const p = playerById(pid)
         if (!p) return null
+        const offPos = !isEligible(p, s) // soft position lock → warning ring
         return (
           <g key={'chip-' + s.key}
             transform={`translate(${s.x + M},${s.y + M})`}
             style={{ cursor: 'grab' }}
             onPointerDown={(e) => onSlotPointerDown(e, s.key)}
           >
-            <JerseySvg player={p} colors={colors} size={11} />
+            <g data-spin transform={spin || undefined}>
+              {offPos && (
+                <circle cx="0" cy="0" r="6.8" fill="none" stroke="#f59e0b" strokeWidth="0.6" strokeDasharray="1.2 0.8" />
+              )}
+              <JerseySvg player={p} colors={colors} size={11} />
+            </g>
           </g>
         )
       })}
+      </g>
     </svg>
   )
 }
@@ -1060,17 +1169,17 @@ function JerseySvg({ player, colors, size }) {
   const s = size
   const r = s / 2
   const num = String(player.number || '').slice(0, 2)
-  const numColor = colors.number
+  const ink = readableOn(colors.jerseyPrimary) // trim + number, auto-contrasted
   const fontSize = num.length >= 2 ? s * 0.38 : s * 0.5
   return (
     <g>
-      <circle cx="0" cy="0" r={r} fill={colors.jerseyPrimary} stroke={colors.jerseySecondary} strokeWidth={s * 0.07} />
-      <text x="0" y={fontSize * 0.36} textAnchor="middle" fill={numColor} fontSize={fontSize} style={{ fontFamily: 'system-ui, -apple-system, sans-serif', fontWeight: 800, letterSpacing: 0 }}>
+      <circle cx="0" cy="0" r={r} fill={colors.jerseyPrimary} stroke={ink} strokeWidth={s * 0.06} />
+      <text x="0" y={fontSize * 0.36} textAnchor="middle" fill={ink} fontSize={fontSize} style={{ fontFamily: 'system-ui, -apple-system, sans-serif', fontWeight: 800, letterSpacing: 0 }}>
         {num}
       </text>
       {/* Handedness badge top-right */}
       <g transform={`translate(${r * 0.6},${-r * 0.7})`}>
-        <circle r={s * 0.18} fill={colors.jerseySecondary} stroke="rgba(0,0,0,0.35)" strokeWidth={s * 0.025} />
+        <circle r={s * 0.18} fill="#e2e8f0" stroke="rgba(0,0,0,0.35)" strokeWidth={s * 0.025} />
         <text y={s * 0.07} textAnchor="middle" fill="#0b1118" fontSize={s * 0.24} style={{ fontFamily: 'system-ui, sans-serif', fontWeight: 700 }}>
           {player.handedness}
         </text>
@@ -1090,12 +1199,13 @@ function JerseySvg({ player, colors, size }) {
 
 function JerseyChip({ player, colors, size = 44 }) {
   const fontSize = String(player.number || '').length >= 2 ? size * 0.38 : size * 0.5
+  const ink = readableOn(colors.jerseyPrimary)
   return (
     <div style={{
       width: size, height: size, borderRadius: '50%',
       background: colors.jerseyPrimary,
-      border: `${Math.max(2, size * 0.07)}px solid ${colors.jerseySecondary}`,
-      color: colors.number,
+      border: `${Math.max(2, size * 0.06)}px solid ${ink}`,
+      color: ink,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       fontSize, fontWeight: 800, position: 'relative',
       boxShadow: '0 2px 4px rgba(0,0,0,0.25)',
@@ -1104,7 +1214,7 @@ function JerseyChip({ player, colors, size = 44 }) {
       <div style={{
         position: 'absolute', top: -size * 0.08, right: -size * 0.08,
         width: size * 0.36, height: size * 0.36, borderRadius: '50%',
-        background: colors.jerseySecondary, color: '#0b1118',
+        background: '#e2e8f0', color: '#0b1118',
         fontSize: size * 0.22, fontWeight: 700, lineHeight: 1,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         border: '1px solid rgba(0,0,0,0.35)',
@@ -1114,18 +1224,19 @@ function JerseyChip({ player, colors, size = 44 }) {
 }
 
 function drawJerseyCanvas(ctx, cx, cy, r, player, colors) {
+  const ink = readableOn(colors.jerseyPrimary)
   ctx.beginPath()
   ctx.arc(cx, cy, r, 0, Math.PI * 2)
   ctx.fillStyle = colors.jerseyPrimary
   ctx.fill()
-  ctx.lineWidth = Math.max(1, r * 0.14)
-  ctx.strokeStyle = colors.jerseySecondary
+  ctx.lineWidth = Math.max(1, r * 0.12)
+  ctx.strokeStyle = ink
   ctx.stroke()
 
   const num = String(player.number || '').slice(0, 2)
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.fillStyle = colors.number
+  ctx.fillStyle = ink
   const fs = num.length >= 2 ? r * 0.85 : r * 1.1
   ctx.font = `800 ${fs}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`
   ctx.fillText(num, cx, cy + 1)
@@ -1134,7 +1245,7 @@ function drawJerseyCanvas(ctx, cx, cy, r, player, colors) {
   const bx = cx + r * 0.6, by = cy - r * 0.7, br = r * 0.36
   ctx.beginPath()
   ctx.arc(bx, by, br, 0, Math.PI * 2)
-  ctx.fillStyle = colors.jerseySecondary
+  ctx.fillStyle = '#e2e8f0'
   ctx.fill()
   ctx.strokeStyle = 'rgba(0,0,0,0.35)'
   ctx.lineWidth = Math.max(0.5, br * 0.12)
@@ -1171,7 +1282,7 @@ function roundRect(ctx, x, y, w, h, r) {
 function Sidebar({ mobile, innerRef, roster, lines, view, colors, hoverBench, dragPlayerId, onBeginDrag, onAddPlayer, onEditPlayer, playerById }) {
   const [tab, setTab] = useState('roster')
   const wrap = mobile
-    ? { width: '100%', height: '40%', borderTop: '1px solid #1f2937' }
+    ? { width: '100%', height: '34%', borderTop: '1px solid #1f2937' }
     : { width: 340, borderLeft: '1px solid #1f2937' }
   return (
     <div ref={innerRef} className={mobile ? 'rr-mob-sidebar' : undefined} style={{
@@ -1304,14 +1415,8 @@ function LineChart({ lines, view, playerById, colors }) {
 // Color popover (two-click: click target → pick swatch → applies)
 // ════════════════════════════════════════════════════════════════════════════
 function ColorPopover({ target, value, onPick, onClose }) {
-  const isIce = target === 'ice'
-  const swatches = isIce ? ICE_SWATCHES : SWATCHES
-  const label = {
-    jerseyPrimary: 'Jersey Primary',
-    jerseySecondary: 'Jersey Trim',
-    number: 'Number',
-    ice: 'Ice Tint',
-  }[target] || target
+  const swatches = SWATCHES
+  const label = { jerseyPrimary: 'Jersey Color' }[target] || target
   return (
     <div onMouseDown={onClose} onTouchStart={onClose}
       style={{
@@ -1343,6 +1448,96 @@ function ColorPopover({ target, value, onPick, onClose }) {
             style={{ width: 36, height: 28, border: 'none', background: 'transparent', cursor: 'pointer' }} />
           <input type="text" value={value} onChange={(e) => onPick(e.target.value)}
             style={{ flex: 1, padding: '4px 6px', background: '#0b1118', color: '#cbd5e1', border: '1px solid #1f2937', borderRadius: 4, fontSize: 12 }} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// My Teams — named local saves (save current lineup, load / rename / delete)
+// ════════════════════════════════════════════════════════════════════════════
+function fmtWhen(ts) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
+    ' · ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+}
+function TeamsModal({ teams, rosterCount, onSaveNew, onOverwrite, onLoad, onRename, onDelete, onClose }) {
+  const [name, setName] = useState('')
+  const [renaming, setRenaming] = useState(null) // team id being renamed
+  const [renameVal, setRenameVal] = useState('')
+  const btn = {
+    padding: '6px 10px', fontSize: 12, fontWeight: 600,
+    background: '#0b1118', color: '#cbd5e1', border: '1px solid #1f2937',
+    borderRadius: 6, cursor: 'pointer',
+  }
+  return (
+    <div onMouseDown={onClose} onTouchStart={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 }}>
+      <div onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}
+        style={{ background: '#0e1722', border: '1px solid #1f2937', borderRadius: 12, padding: 18, width: '100%', maxWidth: 440, maxHeight: '82vh', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: '#cbd5e1' }}>My Teams</div>
+          <button onClick={onClose} style={{ ...btn, padding: '4px 8px' }}>✕</button>
+        </div>
+
+        {/* Save current lineup */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+          <input value={name} onChange={(e) => setName(e.target.value.slice(0, 40))}
+            placeholder="Name this lineup…"
+            onKeyDown={(e) => { if (e.key === 'Enter') { onSaveNew(name); setName('') } }}
+            style={{ flex: 1, padding: '8px 10px', background: '#0b1118', color: '#e2e8f0', border: '1px solid #1f2937', borderRadius: 6, fontSize: 13 }} />
+          <button onClick={() => { onSaveNew(name); setName('') }}
+            style={{ padding: '8px 14px', background: '#0ea5e9', color: '#0b1118', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>
+            Save current
+          </button>
+        </div>
+        <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10 }}>
+          Saves a snapshot of the current roster &amp; lines ({rosterCount} player{rosterCount === 1 ? '' : 's'}) to this device.
+        </div>
+
+        {/* Saved teams list */}
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {teams.length === 0 ? (
+            <div style={{ color: '#475569', fontSize: 12, padding: '10px 4px', lineHeight: 1.5 }}>
+              No saved teams yet. Build a lineup, then save it above to keep more than one roster on this device.
+            </div>
+          ) : teams.map(t => (
+            <div key={t.id} style={{ background: '#0e1722', border: '1px solid #1f2937', borderRadius: 8, padding: 10 }}>
+              {renaming === t.id ? (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input value={renameVal} autoFocus onChange={(e) => setRenameVal(e.target.value.slice(0, 40))}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { onRename(t.id, renameVal); setRenaming(null) } }}
+                    style={{ flex: 1, padding: '6px 8px', background: '#0b1118', color: '#e2e8f0', border: '1px solid #1f2937', borderRadius: 6, fontSize: 13 }} />
+                  <button onClick={() => { onRename(t.id, renameVal); setRenaming(null) }} style={{ ...btn, color: '#4cc2ff' }}>Save</button>
+                  <button onClick={() => setRenaming(null)} style={btn}>Cancel</button>
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</div>
+                      <div style={{ fontSize: 10, color: '#64748b' }}>
+                        {(t.state?.roster?.length ?? 0)} players · saved {fmtWhen(t.savedAt)}
+                      </div>
+                    </div>
+                    <button onClick={() => onLoad(t.id)}
+                      style={{ padding: '6px 14px', background: '#1e3a8a', color: '#fff', border: '1px solid #3b82f6', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+                      Load
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button onClick={() => { if (window.confirm(`Overwrite "${t.name}" with the current lineup?`)) onOverwrite(t.id) }} style={btn}>Update</button>
+                    <button onClick={() => { setRenaming(t.id); setRenameVal(t.name) }} style={btn}>Rename</button>
+                    <div style={{ flex: 1 }} />
+                    <button onClick={() => { if (window.confirm(`Delete "${t.name}"? This can't be undone.`)) onDelete(t.id) }}
+                      style={{ ...btn, color: '#fca5a5', borderColor: '#7f1d1d' }}>Delete</button>
+                  </div>
+                </>
+              )}
+            </div>
+          ))}
         </div>
       </div>
     </div>
