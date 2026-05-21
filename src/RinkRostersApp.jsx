@@ -1281,8 +1281,14 @@ function roundRect(ctx, x, y, w, h, r) {
 // ════════════════════════════════════════════════════════════════════════════
 function Sidebar({ mobile, innerRef, roster, lines, view, colors, hoverBench, dragPlayerId, onBeginDrag, onAddPlayer, onEditPlayer, playerById }) {
   const [tab, setTab] = useState('roster')
+  // On phones the roster is a collapsible bottom sheet, collapsed by default so
+  // the portrait rink uses nearly the full screen height (and is therefore much
+  // wider — its width is height × the fixed rink aspect). Tapping a tab or the
+  // handle expands it for roster editing. Desktop is always the full panel.
+  const [collapsed, setCollapsed] = useState(true)
+  const isCollapsed = mobile && collapsed
   const wrap = mobile
-    ? { width: '100%', height: '34%', borderTop: '1px solid #1f2937' }
+    ? { width: '100%', height: isCollapsed ? 'auto' : '50%', flexShrink: 0, borderTop: '1px solid #1f2937' }
     : { width: 340, borderLeft: '1px solid #1f2937' }
   return (
     <div ref={innerRef} className={mobile ? 'rr-mob-sidebar' : undefined} style={{
@@ -1291,9 +1297,17 @@ function Sidebar({ mobile, innerRef, roster, lines, view, colors, hoverBench, dr
       transition: 'background 0.15s',
       display: 'flex', flexDirection: 'column', minHeight: 0,
     }}>
-      <div style={{ display: 'flex', gap: 4, padding: 8, borderBottom: '1px solid #1f2937' }}>
+      <div style={{ display: 'flex', gap: 4, padding: 8, borderBottom: '1px solid #1f2937', alignItems: 'center' }}>
+        {mobile && (
+          <button onClick={() => setCollapsed(c => !c)} title={isCollapsed ? 'Show roster' : 'Hide roster'}
+            style={{
+              padding: '6px 10px', fontSize: 13, lineHeight: 1, fontWeight: 700,
+              background: '#111b27', color: '#4cc2ff', border: '1px solid #1e3a8a',
+              borderRadius: 6, cursor: 'pointer',
+            }}>{isCollapsed ? '▴' : '▾'}</button>
+        )}
         {['roster', 'lines'].map(t => (
-          <button key={t} onClick={() => setTab(t)}
+          <button key={t} onClick={() => { setTab(t); if (mobile) setCollapsed(false) }}
             style={{
               flex: 1, padding: '6px 10px', fontSize: 12, fontWeight: 600, letterSpacing: 0.5,
               background: tab === t ? '#111b27' : 'transparent',
@@ -1303,13 +1317,15 @@ function Sidebar({ mobile, innerRef, roster, lines, view, colors, hoverBench, dr
             }}>{t}</button>
         ))}
       </div>
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-        {tab === 'roster' ? (
-          <RosterList roster={roster} colors={colors} onBeginDrag={onBeginDrag} onEditPlayer={onEditPlayer} onAddPlayer={onAddPlayer} dragPlayerId={dragPlayerId} />
-        ) : (
-          <LineChart lines={lines} view={view} playerById={playerById} colors={colors} />
-        )}
-      </div>
+      {!isCollapsed && (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+          {tab === 'roster' ? (
+            <RosterList roster={roster} colors={colors} onBeginDrag={onBeginDrag} onEditPlayer={onEditPlayer} onAddPlayer={onAddPlayer} dragPlayerId={dragPlayerId} />
+          ) : (
+            <LineChart lines={lines} view={view} playerById={playerById} colors={colors} />
+          )}
+        </div>
+      )}
     </div>
   )
 }
