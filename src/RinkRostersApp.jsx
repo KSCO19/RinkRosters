@@ -335,13 +335,16 @@ export default function RinkRostersApp() {
   const [hoverSlot, setHoverSlot] = useState(null) // { unitKey, slotKey } or 'BENCH'
 
   const rinkRef = useRef(null)
-  const rinkGroupRef = useRef(null) // inner <g data-rink-rotate> — used for getScreenCTM hit-testing
+  const rinkGroupRef = useRef(null) // inner <g data-rink-rotate> (reserved; hit-testing uses the root svg CTM)
   const rosterRef = useRef(null)
   const [pickerFor, setPickerFor] = useState(null) // 'jerseyPrimary' | null
   const [editPlayerId, setEditPlayerId] = useState(null) // open the edit modal for this player
   // Tap on a rink slot opens an inline name editor at the tap point.
   // { source, slotKey, playerId|null, x, y } — playerId null ⇒ empty slot (create + place).
   const [inlineEdit, setInlineEdit] = useState(null)
+  // Edit (default) → tap a slot to name/rename a player; Move → drag a token to
+  // any slot. Explicit modes so tap and drag never fight on a touch screen.
+  const [moveMode, setMoveMode] = useState(false)
   // Opt-in drag diagnostics (load with ?debug=1) — a small on-screen HUD that
   // reports the live gesture state so touch issues can be pinpointed on-device.
   const [dbg, setDbg] = useState(null)
@@ -527,7 +530,7 @@ export default function RinkRostersApp() {
   // playerId may be null: an empty rink slot still starts a gesture so a clean
   // tap can open the inline name editor (create + place). A drag of a real
   // player relocates it; tap vs drag is decided purely by pointer travel.
-  function beginDrag(e, sourceDesc, playerId) {
+  function beginDrag(e, sourceDesc, playerId, allowMove) {
     e.preventDefault?.()
     const pt = pointerXY(e)
     // Capture the pointer on the pressed element so Android/iOS can't reinterpret
@@ -535,7 +538,7 @@ export default function RinkRostersApp() {
     // move" bug). Released automatically on pointerup.
     let captured = false
     try { e.currentTarget?.setPointerCapture?.(e.pointerId); captured = true } catch { /* unsupported */ }
-    dragRef.current = { source: sourceDesc, playerId: playerId || null, startX: pt.x, startY: pt.y, moved: false, moves: 0 }
+    dragRef.current = { source: sourceDesc, playerId: playerId || null, startX: pt.x, startY: pt.y, moved: false, moves: 0, allowMove: !!allowMove }
     // Ghost + hover rings only appear once the press becomes a real drag (see
     // onDragMove), so a tap reads as a clean click with no flicker.
     window.addEventListener('pointermove', onDragMove, { passive: false })
@@ -553,7 +556,7 @@ export default function RinkRostersApp() {
     d.moves = (d.moves || 0) + 1
     const dx = Math.abs(pt.x - d.startX), dy = Math.abs(pt.y - d.startY)
     if (!d.moved && (dx > TAP_SLOP || dy > TAP_SLOP)) d.moved = true
-    if (d.moved && d.playerId) {
+    if (d.moved && d.allowMove && d.playerId) {
       // Real drag of a real player: show the ghost + live slot highlighting.
       setDragGhost({ playerId: d.playerId, x: pt.x, y: pt.y })
       setHoverSlot(detectHover(pt))
@@ -584,16 +587,16 @@ export default function RinkRostersApp() {
       return
     }
 
-    // Rink slot. One unified model, no mode switch:
-    //  • tap (or a jittery press that never left the slot) → name editor
-    //    (rename the player, or on an empty slot type a name to create + place);
-    //  • drag onto a different slot → relocate; drag to the bench → remove.
-    const stayedHome = hover && hover.kind === 'RINK_SLOT' && hover.slotKey === d.source.slotKey
-    if (!d.moved || stayedHome) {
+    // Rink slot, Edit mode: pressing opens the name editor (rename, or on an
+    // empty slot type a name to create + place). No drag action in this mode.
+    if (!d.allowMove) {
       setInlineEdit({ source: d.source, slotKey: d.source.slotKey, playerId: d.playerId, x: pt.x, y: pt.y })
       return
     }
-    if (!d.playerId) return // dragged an empty slot — nothing to relocate
+
+    // Rink slot, Move mode: drag relocates the token (to any slot, assigned or
+    // not), or drop on the bench to remove it. A plain tap does nothing here.
+    if (!d.moved || !d.playerId) return
     if (hover === 'BENCH') { clearSlot(d.source); return }
     if (hover && hover.kind === 'RINK_SLOT') {
       const target = rinkSlotToTarget(hover.slotKey)
@@ -601,31 +604,41 @@ export default function RinkRostersApp() {
       if (assignToSlot(target, d.playerId) && !sameSlot(d.source, target)) clearSlot(d.source)
     }
   }
-  function detectHover(pt) {
-    // Hit-test rink slots first (more specific), then the bench drop zone.
-    // We let the browser do the screen→rink coordinate transform via the inner
-    // group's getScreenCTM: inverting it maps a screen pixel straight into the
-    // group's local units (feet + margin), correctly accounting for the viewBox,
-    // preserveAspectRatio letterboxing, AND the portrait rotate/squash — all the
-    // things the old hand-rolled math got subtly wrong. Slots live at (s.x+M, s.y+M).
-    const g = rinkGroupRef.current
+  // Map a screen pixel to rink feet coordinates. We take the transform off the
+  // *root* <svg> (getScreenCTM there is well-defined and letterbox/viewBox-correct
+  // across browsers) and undo the portrait wrap (rotate -90° + squash) ourselves —
+  // reading getScreenCTM off the inner rotated <g> is unreliable because browsers
+  // disagree on whether it includes that element's own transform.
+  function screenToFeet(pt) {
     const svg = rinkRef.current
-    if (g && svg && g.getScreenCTM && svg.createSVGPoint) {
-      const ctm = g.getScreenCTM()
-      if (ctm) {
-        const sp = svg.createSVGPoint()
-        sp.x = pt.x; sp.y = pt.y
-        const lp = sp.matrixTransform(ctm.inverse())
-        let best = null, bestD = Infinity
-        for (const s of dispSlots) {
-          const dx = (s.x + RINK_M) - lp.x, dy = (s.y + RINK_M) - lp.y
-          const d2 = dx*dx + dy*dy
-          if (d2 < bestD) { bestD = d2; best = s }
-        }
-        // Generous catch radius (12 ft) so coaches don't have to be pixel-perfect.
-        if (best && bestD < 12 * 12) return { kind: 'RINK_SLOT', slotKey: best.key }
-      }
+    if (!svg || !svg.getScreenCTM || !svg.createSVGPoint) return null
+    const ctm = svg.getScreenCTM()
+    if (!ctm) return null
+    const sp = svg.createSVGPoint(); sp.x = pt.x; sp.y = pt.y
+    const vb = sp.matrixTransform(ctm.inverse()) // point in viewBox units
+    if (vertical) {
+      const VB_W = RINK.W + RINK_M * 2
+      const sq = MOBILE_RINK_SQUASH
+      const VB_L = VB_W * sq
+      return { fx: (VB_L - vb.y) / sq - RINK_M, fy: vb.x - RINK_M }
     }
+    return { fx: vb.x - RINK_M, fy: vb.y - RINK_M }
+  }
+  // Nearest slot to a screen point, within `radiusFt`, else null.
+  function nearestSlot(pt, radiusFt) {
+    const f = screenToFeet(pt)
+    if (!f) return null
+    let best = null, bestD = Infinity
+    for (const s of dispSlots) {
+      const dx = s.x - f.fx, dy = s.y - f.fy, d2 = dx*dx + dy*dy
+      if (d2 < bestD) { bestD = d2; best = s }
+    }
+    return best && bestD < radiusFt * radiusFt ? best.key : null
+  }
+  function detectHover(pt) {
+    // Generous 12 ft catch radius so coaches don't have to be pixel-perfect.
+    const slotKey = nearestSlot(pt, 12)
+    if (slotKey) return { kind: 'RINK_SLOT', slotKey }
     const roster = rosterRef.current
     if (roster) {
       const r = roster.getBoundingClientRect()
@@ -633,24 +646,8 @@ export default function RinkRostersApp() {
     }
     return null
   }
-
-  // Which slot did a press land on? Same getScreenCTM mapping as detectHover but
-  // a tighter radius (a press should be near a token, not just anywhere on ice).
-  function hitSlot(pt) {
-    const g = rinkGroupRef.current, svg = rinkRef.current
-    if (!g || !svg || !g.getScreenCTM || !svg.createSVGPoint) return null
-    const ctm = g.getScreenCTM()
-    if (!ctm) return null
-    const sp = svg.createSVGPoint(); sp.x = pt.x; sp.y = pt.y
-    const lp = sp.matrixTransform(ctm.inverse())
-    let best = null, bestD = Infinity
-    for (const s of dispSlots) {
-      const dx = (s.x + RINK_M) - lp.x, dy = (s.y + RINK_M) - lp.y
-      const d2 = dx*dx + dy*dy
-      if (d2 < bestD) { bestD = d2; best = s }
-    }
-    return best && bestD < 10 * 10 ? best.key : null
-  }
+  // Tighter radius for the initial press (you should grab near a token).
+  function hitSlot(pt) { return nearestSlot(pt, 11) }
 
   // Single pointer entry point for the whole rink. Handling the press on the
   // rink container (an HTML div) instead of the individual SVG shapes sidesteps
@@ -661,11 +658,10 @@ export default function RinkRostersApp() {
     const slotKey = hitSlot(pt)
     if (!slotKey) return
     const pid = activeUnit.filled[slotKey] || null
+    if (moveMode && !pid) return // nothing to relocate on an empty slot
     const target = rinkSlotToTarget(slotKey)
     if (!target) return
-    // Always arm the gesture: a release-in-place taps to edit/create, a drag
-    // relocates. pid may be null (empty slot) — then only the tap-to-create fires.
-    beginDrag(e, { ...target, slotKey }, pid)
+    beginDrag(e, { ...target, slotKey }, pid, moveMode)
   }
 
   function sameSlot(a, b) {
@@ -823,14 +819,16 @@ export default function RinkRostersApp() {
           colors={colors}
         />
         <LineSelector view={view} lines={lines} onView={(patch) => setState(s => ({ ...s, view: { ...s.view, ...patch } }))} />
-        <div style={{ textAlign: 'center', padding: '5px 8px', borderBottom: '1px solid #1f2937', fontSize: 11, color: '#64748b' }}>
-          Tap a spot to name a player · drag a player to move
-        </div>
+        <ModeToggle moveMode={moveMode} onSet={setMoveMode} />
         <div
           onPointerDown={onRinkPointerDown}
           style={{
             flex: 1, minHeight: 0, position: 'relative', display: 'flex', alignItems: 'stretch', justifyContent: 'center',
-            touchAction: 'none', cursor: 'pointer',
+            touchAction: 'none', cursor: moveMode ? 'grab' : 'pointer',
+            // Amber inset ring while Move mode is active — an ambient cue that
+            // drag-to-reposition is live (mirrors the toggle's amber half).
+            boxShadow: moveMode ? 'inset 0 0 0 3px #fbbf24' : 'none',
+            transition: 'box-shadow 0.12s',
           }}>
           <Rink
             innerRef={rinkRef}
@@ -861,7 +859,7 @@ export default function RinkRostersApp() {
         colors={colors}
         hoverBench={hoverSlot === 'BENCH'}
         dragPlayerId={dragGhost?.playerId || null}
-        onBeginDrag={(e, pid) => beginDrag(e, { kind: 'BENCH' }, pid)}
+        onBeginDrag={(e, pid) => beginDrag(e, { kind: 'BENCH' }, pid, true)}
         onAddPlayer={() => setEditPlayerId('NEW')}
         onEditPlayer={(id) => setEditPlayerId(id)}
         playerById={playerById}
@@ -885,7 +883,7 @@ export default function RinkRostersApp() {
           background: 'rgba(2,6,12,0.92)', color: '#7dd3fc', border: '1px solid #334155',
           borderRadius: 8, padding: '8px 10px', fontSize: 11, fontFamily: 'ui-monospace, monospace', lineHeight: 1.5,
         }}>
-          <div style={{ color: '#fbbf24', fontWeight: 700 }}>drag debug</div>
+          <div style={{ color: '#fbbf24', fontWeight: 700 }}>drag debug · {moveMode ? 'MOVE' : 'EDIT'}</div>
           {dbg ? (
             <>
               <div>phase: {dbg.phase}</div>
@@ -1097,6 +1095,27 @@ function LineSelector({ view, lines, onView }) {
 // ════════════════════════════════════════════════════════════════════════════
 // Rink SVG
 // ════════════════════════════════════════════════════════════════════════════
+// Segmented Edit/Move control in its own strip below the line selector — both
+// options always visible, the highlighted half showing the active mode.
+function ModeToggle({ moveMode, onSet }) {
+  const seg = (active, accent) => ({
+    display: 'flex', alignItems: 'center', gap: 6,
+    padding: '8px 16px', borderRadius: 999, cursor: 'pointer',
+    fontSize: 13, fontWeight: 800, letterSpacing: 0.3, border: 'none',
+    background: active ? accent : 'transparent',
+    color: active ? '#0b1118' : '#94a3b8',
+    transition: 'background 0.12s, color 0.12s',
+  })
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', padding: '6px 8px', borderBottom: '1px solid #1f2937' }}>
+      <div style={{ display: 'flex', gap: 4, padding: 4, borderRadius: 999, background: '#0b1118', border: '1px solid #334155' }}>
+        <button className="rr-mob-chip" onClick={() => onSet(false)} style={seg(!moveMode, '#38bdf8')}>✎ Edit names</button>
+        <button className="rr-mob-chip" onClick={() => onSet(true)} style={seg(moveMode, '#fbbf24')}>✥ Move players</button>
+      </div>
+    </div>
+  )
+}
+
 function Rink({ innerRef, groupRef, slots, filled, playerById, colors, hoverSlot, dragPlayerId, isDragEligible, vertical }) {
   // viewBox uses a small margin around the rink so corner radius and the
   // boards' stroke have somewhere to live. Rink geometry is authored landscape
