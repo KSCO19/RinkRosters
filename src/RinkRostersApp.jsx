@@ -342,10 +342,6 @@ export default function RinkRostersApp() {
   // Tap on a rink slot opens an inline name editor at the tap point.
   // { source, slotKey, playerId|null, x, y } — playerId null ⇒ empty slot (create + place).
   const [inlineEdit, setInlineEdit] = useState(null)
-  // Two interaction modes for rink tokens, toggled by the on-rink button:
-  // Edit (default) → tap a slot to type/rename; Move → drag a token to relocate.
-  // Keeping them separate removes the tap-vs-drag ambiguity on touch screens.
-  const [moveMode, setMoveMode] = useState(false)
   // Opt-in drag diagnostics (load with ?debug=1) — a small on-screen HUD that
   // reports the live gesture state so touch issues can be pinpointed on-device.
   const [dbg, setDbg] = useState(null)
@@ -529,10 +525,9 @@ export default function RinkRostersApp() {
   // gesture state lives in refs (60Hz writes); only the floating ghost +
   // hovered slot trigger React renders.
   // playerId may be null: an empty rink slot still starts a gesture so a clean
-  // tap can open the inline name editor (create + place). allowMove gates the
-  // drag-to-relocate behaviour — true for bench drags (the way to place an
-  // existing player) and for rink tokens only while Move mode is on.
-  function beginDrag(e, sourceDesc, playerId, allowMove) {
+  // tap can open the inline name editor (create + place). A drag of a real
+  // player relocates it; tap vs drag is decided purely by pointer travel.
+  function beginDrag(e, sourceDesc, playerId) {
     e.preventDefault?.()
     const pt = pointerXY(e)
     // Capture the pointer on the pressed element so Android/iOS can't reinterpret
@@ -540,7 +535,7 @@ export default function RinkRostersApp() {
     // move" bug). Released automatically on pointerup.
     let captured = false
     try { e.currentTarget?.setPointerCapture?.(e.pointerId); captured = true } catch { /* unsupported */ }
-    dragRef.current = { source: sourceDesc, playerId: playerId || null, startX: pt.x, startY: pt.y, moved: false, allowMove: !!allowMove, moves: 0 }
+    dragRef.current = { source: sourceDesc, playerId: playerId || null, startX: pt.x, startY: pt.y, moved: false, moves: 0 }
     // Ghost + hover rings only appear once the press becomes a real drag (see
     // onDragMove), so a tap reads as a clean click with no flicker.
     window.addEventListener('pointermove', onDragMove, { passive: false })
@@ -548,7 +543,7 @@ export default function RinkRostersApp() {
     window.addEventListener('pointercancel', onDragEnd, { passive: false })
     // Some Android browsers fire touchmove faster than pointermove; back it up.
     window.addEventListener('touchmove', preventDefault, { passive: false })
-    if (DEBUG) setDbg({ phase: 'down', src: sourceDesc.kind, pid: !!playerId, allowMove: !!allowMove, captured, ptr: e.pointerType, moves: 0, moved: false, end: '', hover: '' })
+    if (DEBUG) setDbg({ phase: 'down', src: sourceDesc.kind, pid: !!playerId, captured, ptr: e.pointerType, moves: 0, moved: false, end: '', hover: '' })
   }
   function onDragMove(e) {
     const d = dragRef.current
@@ -558,7 +553,7 @@ export default function RinkRostersApp() {
     d.moves = (d.moves || 0) + 1
     const dx = Math.abs(pt.x - d.startX), dy = Math.abs(pt.y - d.startY)
     if (!d.moved && (dx > TAP_SLOP || dy > TAP_SLOP)) d.moved = true
-    if (d.moved && d.allowMove && d.playerId) {
+    if (d.moved && d.playerId) {
       // Real drag of a real player: show the ghost + live slot highlighting.
       setDragGhost({ playerId: d.playerId, x: pt.x, y: pt.y })
       setHoverSlot(detectHover(pt))
@@ -576,45 +571,34 @@ export default function RinkRostersApp() {
     dragRef.current = null
     setDragGhost(null)
     setHoverSlot(null)
-    const isTap = !d.moved
-    if (DEBUG) {
-      const h = d.playerId ? detectHover(pt) : null
-      setDbg(s => s ? { ...s, phase: 'end', end: e.type + (isTap ? ' tap' : ' drag'), moves: d.moves, moved: d.moved, hover: h && h.kind ? h.slotKey : String(h) } : s)
-    }
+    const hover = detectHover(pt)
+    if (DEBUG) setDbg(s => s ? { ...s, phase: 'end', end: e.type + (d.moved ? ' drag' : ' tap'), moves: d.moves, moved: d.moved, hover: hover && hover.kind ? hover.slotKey : String(hover) } : s)
 
     // Bench: a tap opens the full edit modal; a drag places onto the rink.
     if (d.source.kind === 'BENCH') {
-      if (isTap) { setEditPlayerId(d.playerId); return }
-    } else if (!d.allowMove) {
-      // Rink slot, Edit mode: pressing a slot opens the inline name editor
-      // (rename, or on an empty slot type a name that creates + places a player).
-      // There's no drag action in Edit mode, so don't require a pixel-perfect
-      // tap — a jittery finger press still opens it. Relocating needs Move mode.
-      setInlineEdit({ source: d.source, slotKey: d.source.slotKey, playerId: d.playerId, x: pt.x, y: pt.y })
-      return
-    } else if (isTap) {
-      // Rink slot, Move mode, no movement → nothing to do.
+      if (!d.moved) { setEditPlayerId(d.playerId); return }
+      if (hover && hover.kind === 'RINK_SLOT') {
+        const target = rinkSlotToTarget(hover.slotKey)
+        if (target) assignToSlot(target, d.playerId)
+      }
       return
     }
 
-    // A real drag with a player to place: bench→rink or rink→rink relocation.
-    if (!d.playerId) return
-    const hover = detectHover(pt)
-    if (hover === 'BENCH') {
-      // Drop back to bench: clear the source slot if we came from the rink.
-      if (d.source.kind !== 'BENCH') clearSlot(d.source)
+    // Rink slot. One unified model, no mode switch:
+    //  • tap (or a jittery press that never left the slot) → name editor
+    //    (rename the player, or on an empty slot type a name to create + place);
+    //  • drag onto a different slot → relocate; drag to the bench → remove.
+    const stayedHome = hover && hover.kind === 'RINK_SLOT' && hover.slotKey === d.source.slotKey
+    if (!d.moved || stayedHome) {
+      setInlineEdit({ source: d.source, slotKey: d.source.slotKey, playerId: d.playerId, x: pt.x, y: pt.y })
       return
     }
-    if (hover && typeof hover === 'object' && hover.kind === 'RINK_SLOT') {
+    if (!d.playerId) return // dragged an empty slot — nothing to relocate
+    if (hover === 'BENCH') { clearSlot(d.source); return }
+    if (hover && hover.kind === 'RINK_SLOT') {
       const target = rinkSlotToTarget(hover.slotKey)
       if (!target) return
-      const ok = assignToSlot(target, d.playerId)
-      if (ok && d.source.kind !== 'BENCH') {
-        // Slot-to-slot move: empty out the source (no swap — same player can
-        // legitimately occupy both ES and a special-teams slot).
-        const sameTarget = sameSlot(d.source, target)
-        if (!sameTarget) clearSlot(d.source)
-      }
+      if (assignToSlot(target, d.playerId) && !sameSlot(d.source, target)) clearSlot(d.source)
     }
   }
   function detectHover(pt) {
@@ -677,10 +661,11 @@ export default function RinkRostersApp() {
     const slotKey = hitSlot(pt)
     if (!slotKey) return
     const pid = activeUnit.filled[slotKey] || null
-    if (moveMode && !pid) return // nothing to relocate on an empty slot
     const target = rinkSlotToTarget(slotKey)
     if (!target) return
-    beginDrag(e, { ...target, slotKey }, pid, moveMode)
+    // Always arm the gesture: a release-in-place taps to edit/create, a drag
+    // relocates. pid may be null (empty slot) — then only the tap-to-create fires.
+    beginDrag(e, { ...target, slotKey }, pid)
   }
 
   function sameSlot(a, b) {
@@ -838,16 +823,14 @@ export default function RinkRostersApp() {
           colors={colors}
         />
         <LineSelector view={view} lines={lines} onView={(patch) => setState(s => ({ ...s, view: { ...s.view, ...patch } }))} />
-        <ModeToggle moveMode={moveMode} onSet={setMoveMode} />
+        <div style={{ textAlign: 'center', padding: '5px 8px', borderBottom: '1px solid #1f2937', fontSize: 11, color: '#64748b' }}>
+          Tap a spot to name a player · drag a player to move
+        </div>
         <div
           onPointerDown={onRinkPointerDown}
           style={{
             flex: 1, minHeight: 0, position: 'relative', display: 'flex', alignItems: 'stretch', justifyContent: 'center',
-            touchAction: 'none', cursor: moveMode ? 'grab' : 'pointer',
-            // Amber inset ring while Move mode is active — a second, ambient cue
-            // (beyond the segmented toggle) that drag-to-reposition is live.
-            boxShadow: moveMode ? 'inset 0 0 0 3px #fbbf24' : 'none',
-            transition: 'box-shadow 0.12s',
+            touchAction: 'none', cursor: 'pointer',
           }}>
           <Rink
             innerRef={rinkRef}
@@ -878,7 +861,7 @@ export default function RinkRostersApp() {
         colors={colors}
         hoverBench={hoverSlot === 'BENCH'}
         dragPlayerId={dragGhost?.playerId || null}
-        onBeginDrag={(e, pid) => beginDrag(e, { kind: 'BENCH' }, pid, true)}
+        onBeginDrag={(e, pid) => beginDrag(e, { kind: 'BENCH' }, pid)}
         onAddPlayer={() => setEditPlayerId('NEW')}
         onEditPlayer={(id) => setEditPlayerId(id)}
         playerById={playerById}
@@ -902,11 +885,11 @@ export default function RinkRostersApp() {
           background: 'rgba(2,6,12,0.92)', color: '#7dd3fc', border: '1px solid #334155',
           borderRadius: 8, padding: '8px 10px', fontSize: 11, fontFamily: 'ui-monospace, monospace', lineHeight: 1.5,
         }}>
-          <div style={{ color: '#fbbf24', fontWeight: 700 }}>drag debug · {moveMode ? 'MOVE' : 'EDIT'}</div>
+          <div style={{ color: '#fbbf24', fontWeight: 700 }}>drag debug</div>
           {dbg ? (
             <>
               <div>phase: {dbg.phase}</div>
-              <div>src: {dbg.src} · pid: {String(dbg.pid)} · allowMove: {String(dbg.allowMove)}</div>
+              <div>src: {dbg.src} · pid: {String(dbg.pid)}</div>
               <div>ptr: {dbg.ptr} · captured: {String(dbg.captured)}</div>
               <div>moves: {dbg.moves} · moved: {String(dbg.moved)}</div>
               <div>end: {dbg.end || '—'} · hover: {dbg.hover || '—'}</div>
@@ -1114,32 +1097,6 @@ function LineSelector({ view, lines, onView }) {
 // ════════════════════════════════════════════════════════════════════════════
 // Rink SVG
 // ════════════════════════════════════════════════════════════════════════════
-// Floating button over the rink that flips between Edit (tap to type/rename)
-// and Move (drag to relocate) for the on-ice tokens. Sits bottom-left, clear of
-// the rink. A segmented control (not a single button) so both modes are always
-// visible and the highlighted half makes the active mode unmistakable.
-function ModeToggle({ moveMode, onSet }) {
-  const seg = (active, accent) => ({
-    display: 'flex', alignItems: 'center', gap: 6,
-    padding: '8px 16px', borderRadius: 999, cursor: 'pointer',
-    fontSize: 13, fontWeight: 800, letterSpacing: 0.3, border: 'none',
-    background: active ? accent : 'transparent',
-    color: active ? '#0b1118' : '#94a3b8',
-    transition: 'background 0.12s, color 0.12s',
-  })
-  return (
-    <div style={{ display: 'flex', justifyContent: 'center', padding: '6px 8px', borderBottom: '1px solid #1f2937' }}>
-      <div style={{
-        display: 'flex', gap: 4, padding: 4, borderRadius: 999,
-        background: '#0b1118', border: '1px solid #334155',
-      }}>
-        <button className="rr-mob-chip" onClick={() => onSet(false)} style={seg(!moveMode, '#38bdf8')}>✎ Edit names</button>
-        <button className="rr-mob-chip" onClick={() => onSet(true)} style={seg(moveMode, '#fbbf24')}>✥ Move players</button>
-      </div>
-    </div>
-  )
-}
-
 function Rink({ innerRef, groupRef, slots, filled, playerById, colors, hoverSlot, dragPlayerId, isDragEligible, vertical }) {
   // viewBox uses a small margin around the rink so corner radius and the
   // boards' stroke have somewhere to live. Rink geometry is authored landscape
