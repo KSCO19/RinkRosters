@@ -800,8 +800,14 @@ export default function RinkRostersApp() {
           colors={colors}
         />
         <LineSelector view={view} lines={lines} onView={(patch) => setState(s => ({ ...s, view: { ...s.view, ...patch } }))} />
-        <div style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', alignItems: 'stretch', justifyContent: 'center' }}>
-          <MoveModeToggle moveMode={moveMode} onToggle={() => setMoveMode(m => !m)} />
+        <ModeToggle moveMode={moveMode} onSet={setMoveMode} />
+        <div style={{
+          flex: 1, minHeight: 0, position: 'relative', display: 'flex', alignItems: 'stretch', justifyContent: 'center',
+          // Amber inset ring while Move mode is active — a second, ambient cue
+          // (beyond the segmented toggle) that drag-to-reposition is live.
+          boxShadow: moveMode ? 'inset 0 0 0 3px #fbbf24' : 'none',
+          transition: 'box-shadow 0.12s',
+        }}>
           <Rink
             innerRef={rinkRef}
             moveMode={moveMode}
@@ -907,9 +913,6 @@ export default function RinkRostersApp() {
             initialName={p?.name || ''}
             slotLabel={slot?.label || ''}
             isNew={isNew}
-            mobile={mobile}
-            x={inlineEdit.x}
-            y={inlineEdit.y}
             onCommit={(name) => {
               const trimmed = name.trim()
               if (isNew) {
@@ -1063,26 +1066,27 @@ function LineSelector({ view, lines, onView }) {
 // ════════════════════════════════════════════════════════════════════════════
 // Floating button over the rink that flips between Edit (tap to type/rename)
 // and Move (drag to relocate) for the on-ice tokens. Sits bottom-left, clear of
-// the right-edge controls and thumb-reachable on phones.
-function MoveModeToggle({ moveMode, onToggle }) {
+// the rink. A segmented control (not a single button) so both modes are always
+// visible and the highlighted half makes the active mode unmistakable.
+function ModeToggle({ moveMode, onSet }) {
+  const seg = (active, accent) => ({
+    display: 'flex', alignItems: 'center', gap: 6,
+    padding: '8px 16px', borderRadius: 999, cursor: 'pointer',
+    fontSize: 13, fontWeight: 800, letterSpacing: 0.3, border: 'none',
+    background: active ? accent : 'transparent',
+    color: active ? '#0b1118' : '#94a3b8',
+    transition: 'background 0.12s, color 0.12s',
+  })
   return (
-    <button
-      onClick={onToggle}
-      className="rr-mob-chip"
-      title={moveMode ? 'Move mode: drag tokens to reposition' : 'Edit mode: tap a token to type a name'}
-      style={{
-        position: 'absolute', left: 10, bottom: 10, zIndex: 30,
-        display: 'flex', alignItems: 'center', gap: 7,
-        padding: '8px 12px', borderRadius: 999, cursor: 'pointer',
-        fontSize: 13, fontWeight: 700, letterSpacing: 0.3,
-        background: moveMode ? '#0ea5e9' : 'rgba(14,23,34,0.92)',
-        color: moveMode ? '#0b1118' : '#cbd5e1',
-        border: '1px solid ' + (moveMode ? '#0ea5e9' : '#334155'),
-        boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
+    <div style={{ display: 'flex', justifyContent: 'center', padding: '6px 8px', borderBottom: '1px solid #1f2937' }}>
+      <div style={{
+        display: 'flex', gap: 4, padding: 4, borderRadius: 999,
+        background: '#0b1118', border: '1px solid #334155',
       }}>
-      <span style={{ fontSize: 15, lineHeight: 1 }}>{moveMode ? '✥' : '✎'}</span>
-      {moveMode ? 'Move' : 'Edit'}
-    </button>
+        <button className="rr-mob-chip" onClick={() => onSet(false)} style={seg(!moveMode, '#38bdf8')}>✎ Edit names</button>
+        <button className="rr-mob-chip" onClick={() => onSet(true)} style={seg(moveMode, '#fbbf24')}>✥ Move players</button>
+      </div>
+    </div>
   )
 }
 
@@ -1706,18 +1710,41 @@ function TeamsModal({ teams, rosterCount, onSaveNew, onOverwrite, onLoad, onRena
 // tapping away commits (so a typed name sticks without a confirm step); Escape
 // or the backdrop on an untouched field cancels. For an existing chip it also
 // offers Remove (clear the slot) and Details (full player modal).
-function InlineNameEditor({ initialName, slotLabel, isNew, mobile, x, y, onCommit, onRemove, onDetails, onCancel }) {
+function readViewport() {
+  const vv = typeof window !== 'undefined' ? window.visualViewport : null
+  const ih = typeof window !== 'undefined' ? window.innerHeight : 600
+  const iw = typeof window !== 'undefined' ? window.innerWidth : 800
+  if (!vv) return { offsetLeft: 0, offsetTop: 0, width: iw, height: ih, keyboard: 0 }
+  return {
+    offsetLeft: vv.offsetLeft, offsetTop: vv.offsetTop, width: vv.width, height: vv.height,
+    keyboard: Math.max(0, ih - (vv.offsetTop + vv.height)),
+  }
+}
+
+function InlineNameEditor({ initialName, slotLabel, isNew, onCommit, onRemove, onDetails, onCancel }) {
   const [val, setVal] = useState(initialName)
   const inputRef = useRef(null)
+  const [vp, setVp] = useState(readViewport)
   useEffect(() => { const el = inputRef.current; if (el) { el.focus(); el.select() } }, [])
+  // Track the visual viewport so the card follows the keyboard as it opens/closes.
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    const on = () => setVp(readViewport())
+    vv.addEventListener('resize', on)
+    vv.addEventListener('scroll', on)
+    return () => { vv.removeEventListener('resize', on); vv.removeEventListener('scroll', on) }
+  }, [])
 
-  const W = 230, GAP = 16
-  const vw = typeof window !== 'undefined' ? window.innerWidth : 800
-  const vh = typeof window !== 'undefined' ? window.innerHeight : 600
-  // On phones the soft keyboard covers the lower half, so pin near the top
-  // (centred) where it's always visible. Desktop anchors at the tap point.
-  const left = mobile ? Math.max(8, (vw - W) / 2) : Math.max(8, Math.min(vw - W - 8, x - W / 2))
-  const top  = mobile ? 72 : Math.max(8, Math.min(vh - 120, y + GAP))
+  const W = 260
+  // Centre horizontally in the visible viewport. With the soft keyboard open,
+  // sit just above it; otherwise centre vertically. Identical logic on every
+  // platform — driven purely by Visual Viewport metrics, no mobile/desktop fork.
+  const centerLeft = vp.offsetLeft + vp.width / 2
+  const kbdOpen = vp.keyboard > 100
+  const pos = kbdOpen
+    ? { left: centerLeft, bottom: vp.keyboard + 14, transform: 'translateX(-50%)' }
+    : { left: centerLeft, top: vp.offsetTop + vp.height / 2, transform: 'translate(-50%, -50%)' }
 
   function commit() { onCommit(val) }
   function onKeyDown(e) {
@@ -1734,7 +1761,7 @@ function InlineNameEditor({ initialName, slotLabel, isNew, mobile, x, y, onCommi
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.25)', zIndex: 200 }}>
       <div onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}
         style={{
-          position: 'absolute', left, top, width: W,
+          position: 'fixed', ...pos, width: W,
           background: '#0e1722', border: '1px solid #1f2937', borderRadius: 10,
           padding: 10, boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
           display: 'flex', flexDirection: 'column', gap: 8,
