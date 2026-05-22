@@ -335,6 +335,7 @@ export default function RinkRostersApp() {
   const [hoverSlot, setHoverSlot] = useState(null) // { unitKey, slotKey } or 'BENCH'
 
   const rinkRef = useRef(null)
+  const rinkGroupRef = useRef(null) // inner <g data-rink-rotate> — used for getScreenCTM hit-testing
   const rosterRef = useRef(null)
   const [pickerFor, setPickerFor] = useState(null) // 'jerseyPrimary' | null
   const [editPlayerId, setEditPlayerId] = useState(null) // open the edit modal for this player
@@ -345,6 +346,10 @@ export default function RinkRostersApp() {
   // Edit (default) → tap a slot to type/rename; Move → drag a token to relocate.
   // Keeping them separate removes the tap-vs-drag ambiguity on touch screens.
   const [moveMode, setMoveMode] = useState(false)
+  // Opt-in drag diagnostics (load with ?debug=1) — a small on-screen HUD that
+  // reports the live gesture state so touch issues can be pinpointed on-device.
+  const [dbg, setDbg] = useState(null)
+  const DEBUG = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug')
   const [teamsOpen, setTeamsOpen] = useState(false)
   const [teams, setTeams] = useState(loadTeams)
 
@@ -533,8 +538,9 @@ export default function RinkRostersApp() {
     // Capture the pointer on the pressed element so Android/iOS can't reinterpret
     // the gesture as a scroll and fire pointercancel mid-drag (the "tokens won't
     // move" bug). Released automatically on pointerup.
-    try { e.currentTarget?.setPointerCapture?.(e.pointerId) } catch { /* unsupported */ }
-    dragRef.current = { source: sourceDesc, playerId: playerId || null, startX: pt.x, startY: pt.y, moved: false, allowMove: !!allowMove }
+    let captured = false
+    try { e.currentTarget?.setPointerCapture?.(e.pointerId); captured = true } catch { /* unsupported */ }
+    dragRef.current = { source: sourceDesc, playerId: playerId || null, startX: pt.x, startY: pt.y, moved: false, allowMove: !!allowMove, moves: 0 }
     // Ghost + hover rings only appear once the press becomes a real drag (see
     // onDragMove), so a tap reads as a clean click with no flicker.
     window.addEventListener('pointermove', onDragMove, { passive: false })
@@ -542,12 +548,14 @@ export default function RinkRostersApp() {
     window.addEventListener('pointercancel', onDragEnd, { passive: false })
     // Some Android browsers fire touchmove faster than pointermove; back it up.
     window.addEventListener('touchmove', preventDefault, { passive: false })
+    if (DEBUG) setDbg({ phase: 'down', src: sourceDesc.kind, pid: !!playerId, allowMove: !!allowMove, captured, ptr: e.pointerType, moves: 0, moved: false, end: '', hover: '' })
   }
   function onDragMove(e) {
     const d = dragRef.current
     if (!d) return
     e.preventDefault?.()
     const pt = pointerXY(e)
+    d.moves = (d.moves || 0) + 1
     const dx = Math.abs(pt.x - d.startX), dy = Math.abs(pt.y - d.startY)
     if (!d.moved && (dx > TAP_SLOP || dy > TAP_SLOP)) d.moved = true
     if (d.moved && d.allowMove && d.playerId) {
@@ -555,6 +563,7 @@ export default function RinkRostersApp() {
       setDragGhost({ playerId: d.playerId, x: pt.x, y: pt.y })
       setHoverSlot(detectHover(pt))
     }
+    if (DEBUG) setDbg(s => s ? { ...s, phase: 'move', moves: d.moves, moved: d.moved } : s)
   }
   function onDragEnd(e) {
     const d = dragRef.current
@@ -568,6 +577,10 @@ export default function RinkRostersApp() {
     setDragGhost(null)
     setHoverSlot(null)
     const isTap = !d.moved
+    if (DEBUG) {
+      const h = d.playerId ? detectHover(pt) : null
+      setDbg(s => s ? { ...s, phase: 'end', end: e.type + (isTap ? ' tap' : ' drag'), moves: d.moves, moved: d.moved, hover: h && h.kind ? h.slotKey : String(h) } : s)
+    }
 
     // Bench: a tap opens the full edit modal; a drag places onto the rink.
     if (d.source.kind === 'BENCH') {
@@ -605,36 +618,28 @@ export default function RinkRostersApp() {
     }
   }
   function detectHover(pt) {
-    // Hit-test the rink slots first (more specific), then the bench drop zone.
-    const rink = rinkRef.current
-    if (rink) {
-      const r = rink.getBoundingClientRect()
-      if (pt.x >= r.left && pt.x <= r.right && pt.y >= r.top && pt.y <= r.bottom) {
-        // Map screen→rink coordinates and find the nearest slot center. When the
-        // rink is rendered portrait (vertical), invert the -90° wrapper rotation:
-        // display point (Dx,Dy) came from feet (s.x,s.y) as Dx=s.y+M, Dy=VB_W-(s.x+M).
-        let x, y
-        if (vertical) {
-          const VB_W = RINK.W + RINK_M * 2
-          const VB_H = RINK.H + RINK_M * 2
-          const sq = MOBILE_RINK_SQUASH
-          const dispX = ((pt.x - r.left) / r.width) * VB_H
-          const dispY = ((pt.y - r.top) / r.height) * (VB_W * sq)
-          y = dispX - RINK_M
-          x = VB_W - dispY / sq - RINK_M
-        } else {
-          x = ((pt.x - r.left) / r.width) * RINK.W
-          y = ((pt.y - r.top) / r.height) * RINK.H
-        }
+    // Hit-test rink slots first (more specific), then the bench drop zone.
+    // We let the browser do the screen→rink coordinate transform via the inner
+    // group's getScreenCTM: inverting it maps a screen pixel straight into the
+    // group's local units (feet + margin), correctly accounting for the viewBox,
+    // preserveAspectRatio letterboxing, AND the portrait rotate/squash — all the
+    // things the old hand-rolled math got subtly wrong. Slots live at (s.x+M, s.y+M).
+    const g = rinkGroupRef.current
+    const svg = rinkRef.current
+    if (g && svg && g.getScreenCTM && svg.createSVGPoint) {
+      const ctm = g.getScreenCTM()
+      if (ctm) {
+        const sp = svg.createSVGPoint()
+        sp.x = pt.x; sp.y = pt.y
+        const lp = sp.matrixTransform(ctm.inverse())
         let best = null, bestD = Infinity
         for (const s of dispSlots) {
-          const dx = s.x - x, dy = s.y - y
+          const dx = (s.x + RINK_M) - lp.x, dy = (s.y + RINK_M) - lp.y
           const d2 = dx*dx + dy*dy
           if (d2 < bestD) { bestD = d2; best = s }
         }
         // Generous catch radius (12 ft) so coaches don't have to be pixel-perfect.
         if (best && bestD < 12 * 12) return { kind: 'RINK_SLOT', slotKey: best.key }
-        return null
       }
     }
     const roster = rosterRef.current
@@ -810,6 +815,7 @@ export default function RinkRostersApp() {
         }}>
           <Rink
             innerRef={rinkRef}
+            groupRef={rinkGroupRef}
             moveMode={moveMode}
             slots={dispSlots}
             filled={activeUnit.filled}
@@ -864,6 +870,26 @@ export default function RinkRostersApp() {
           </div>
         )
       })()}
+
+      {/* Drag diagnostics HUD (?debug=1) */}
+      {DEBUG && (
+        <div style={{
+          position: 'fixed', top: 8, right: 8, zIndex: 500, pointerEvents: 'none',
+          background: 'rgba(2,6,12,0.92)', color: '#7dd3fc', border: '1px solid #334155',
+          borderRadius: 8, padding: '8px 10px', fontSize: 11, fontFamily: 'ui-monospace, monospace', lineHeight: 1.5,
+        }}>
+          <div style={{ color: '#fbbf24', fontWeight: 700 }}>drag debug · {moveMode ? 'MOVE' : 'EDIT'}</div>
+          {dbg ? (
+            <>
+              <div>phase: {dbg.phase}</div>
+              <div>src: {dbg.src} · pid: {String(dbg.pid)} · allowMove: {String(dbg.allowMove)}</div>
+              <div>ptr: {dbg.ptr} · captured: {String(dbg.captured)}</div>
+              <div>moves: {dbg.moves} · moved: {String(dbg.moved)}</div>
+              <div>end: {dbg.end || '—'} · hover: {dbg.hover || '—'}</div>
+            </>
+          ) : <div>press a token…</div>}
+        </div>
+      )}
 
       {/* Color popover */}
       {pickerFor && (
@@ -1090,7 +1116,7 @@ function ModeToggle({ moveMode, onSet }) {
   )
 }
 
-function Rink({ innerRef, moveMode, slots, filled, playerById, colors, hoverSlot, dragPlayerId, isDragEligible, onSlotPointerDown, vertical }) {
+function Rink({ innerRef, groupRef, moveMode, slots, filled, playerById, colors, hoverSlot, dragPlayerId, isDragEligible, onSlotPointerDown, vertical }) {
   // viewBox uses a small margin around the rink so corner radius and the
   // boards' stroke have somewhere to live. Rink geometry is authored landscape
   // (200×85 ft, ~2.35:1). On mobile we render portrait by swapping the viewBox
@@ -1116,7 +1142,7 @@ function Rink({ innerRef, moveMode, slots, filled, playerById, colors, hoverSlot
       preserveAspectRatio="xMidYMid meet"
       style={{ width: '100%', height: '100%', userSelect: 'none', touchAction: 'none' }}
     >
-      <g data-rink-rotate transform={wrap}>
+      <g data-rink-rotate ref={groupRef} transform={wrap}>
       {/* Boards / ice surface */}
       <RinkBoards ice={ICE_FILL} M={M} />
       {/* Lines, dots, circles, creases, trapezoids — all NHL-correct. cs is the
