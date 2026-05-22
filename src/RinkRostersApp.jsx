@@ -496,15 +496,12 @@ export default function RinkRostersApp() {
   // immediately). Eligibility defaults to the slot's natural position.
   function createAndPlace(target, slot, name) {
     const player = normalizePlayer({ id: newId(), name, eligibility: defaultEligForSlot(slot), handedness: 'R' })
-    // A freshly created token starts at the slot's default spot — drop any stale
-    // free-placement override left behind by a previous occupant of this slot.
-    const cleared = { ...state.positions }
-    if (target.slotKey) delete cleared[posKey(target.slotKey)]
+    // Position is a property of the spot, not the player: a token created in a
+    // slot inherits wherever that marker was dragged to (no reset). Reset clears all.
     setState(s => ({
       ...s,
       roster: s.roster.concat([player]),
       lines: placeInLines(s.lines, target, player.id),
-      positions: cleared,
     }))
   }
 
@@ -594,10 +591,12 @@ export default function RinkRostersApp() {
     d.moves = (d.moves || 0) + 1
     const dx = Math.abs(pt.x - d.startX), dy = Math.abs(pt.y - d.startY)
     if (!d.moved && (dx > TAP_SLOP || dy > TAP_SLOP)) d.moved = true
-    if (d.moved && d.allowMove && d.playerId) {
-      setDragGhost({ playerId: d.playerId, x: pt.x, y: pt.y })
-      // Bench drags snap into a slot, so show slot highlights. Rink-token drags
-      // are free placement (no snapping) — only surface the bench-removal cue.
+    if (d.moved && d.allowMove) {
+      // Ghost follows the finger: a jersey for a real player, or a dashed marker
+      // (with the slot label) when dragging an empty position.
+      setDragGhost({ playerId: d.playerId, label: d.source.label, x: pt.x, y: pt.y })
+      // Bench drags snap into a slot, so show slot highlights. Rink drags are
+      // free placement (no snapping) — only surface the bench-removal cue.
       const h = detectHover(pt)
       setHoverSlot(d.source.kind === 'BENCH' ? h : (h === 'BENCH' ? h : null))
     }
@@ -634,11 +633,11 @@ export default function RinkRostersApp() {
       return
     }
 
-    // Rink slot, Move mode: free placement — the token stays exactly where the
-    // thumb lifts (its role/line stays the same). Dropping over the roster
-    // drawer removes it from the ice. A plain tap does nothing here.
-    if (!d.moved || !d.playerId) return
-    if (hover === 'BENCH') { clearSlot(d.source); return }
+    // Rink slot, Move mode: free placement for any spot — a filled token or an
+    // empty position marker — stays exactly where the thumb lifts. Dropping a
+    // filled token over the roster drawer removes it. A plain tap does nothing.
+    if (!d.moved) return
+    if (d.playerId && hover === 'BENCH') { clearSlot(d.source); return }
     const f = screenToFeet(pt)
     if (f) setSlotPos(d.source.slotKey, f.fx, f.fy)
   }
@@ -696,10 +695,13 @@ export default function RinkRostersApp() {
     const slotKey = hitSlot(pt)
     if (!slotKey) return
     const pid = activeUnit.filled[slotKey] || null
-    if (moveMode && !pid) return // nothing to relocate on an empty slot
     const target = rinkSlotToTarget(slotKey)
     if (!target) return
-    beginDrag(e, { ...target, slotKey }, pid, moveMode)
+    // In Move mode every spot is draggable — filled tokens *and* empty position
+    // markers (so a coach can arrange the layout before naming anyone). The slot
+    // label rides along for the empty-marker drag ghost.
+    const label = activeUnit.slots.find(s => s.key === slotKey)?.label
+    beginDrag(e, { ...target, slotKey, label }, pid, moveMode)
   }
 
   function sameSlot(a, b) {
@@ -907,13 +909,19 @@ export default function RinkRostersApp() {
         playerById={playerById}
       />
 
-      {/* Drag ghost (follows pointer) */}
+      {/* Drag ghost (follows pointer) — jersey for a player, dashed marker for
+          an empty position being repositioned. */}
       {dragGhost && (() => {
-        const p = playerById(dragGhost.playerId)
-        if (!p) return null
+        const p = dragGhost.playerId ? playerById(dragGhost.playerId) : null
         return (
           <div style={{ position: 'fixed', left: dragGhost.x - 24, top: dragGhost.y - 24, width: 48, height: 48, pointerEvents: 'none', zIndex: 100, opacity: 0.92 }}>
-            <JerseyChip player={p} colors={colors} size={48} />
+            {p ? <JerseyChip player={p} colors={colors} size={48} /> : (
+              <div style={{
+                width: 48, height: 48, borderRadius: '50%', border: '2px dashed #94a3b8',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: '#cbd5e1', fontWeight: 700, fontSize: 14, background: 'rgba(11,17,24,0.55)',
+              }}>{dragGhost.label || ''}</div>
+            )}
           </div>
         )
       })()}
