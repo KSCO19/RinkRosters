@@ -84,6 +84,14 @@ const ICE_FILL = '#eaf2fb'
 // SVG margin (ft) around the rink inside the viewBox; shared by render + hit-test.
 const RINK_M = 4
 
+// Mobile-only compression of the rink's long axis (portrait mode) so the board
+// fills the phone's width instead of leaving big side gutters. The full-length
+// 200×85 rink is ~2.35:1, far taller than a phone's rink area, so it gutters;
+// squashing the length makes it chunkier and wider. Player chips are
+// counter-scaled to stay perfectly round — only the rink markings/faceoff
+// circles take the squash (they go slightly oval). Set to 1 to fully revert.
+const MOBILE_RINK_SQUASH = 0.72
+
 // ─── Defaults ─────────────────────────────────────────────────────────────────
 // Only the jersey color is user-chosen. Number + trim are derived from it via
 // readableOn() for guaranteed contrast; ice is fixed (ICE_FILL).
@@ -525,10 +533,11 @@ export default function RinkRostersApp() {
         if (vertical) {
           const VB_W = RINK.W + RINK_M * 2
           const VB_H = RINK.H + RINK_M * 2
+          const sq = MOBILE_RINK_SQUASH
           const dispX = ((pt.x - r.left) / r.width) * VB_H
-          const dispY = ((pt.y - r.top) / r.height) * VB_W
+          const dispY = ((pt.y - r.top) / r.height) * (VB_W * sq)
           y = dispX - RINK_M
-          x = VB_W - dispY - RINK_M
+          x = VB_W - dispY / sq - RINK_M
         } else {
           x = ((pt.x - r.left) / r.width) * RINK.W
           y = ((pt.y - r.top) / r.height) * RINK.H
@@ -985,12 +994,17 @@ function Rink({ innerRef, slots, filled, playerById, colors, hoverSlot, dragPlay
   const M = RINK_M
   const VB_W = RINK.W + M * 2
   const VB_H = RINK.H + M * 2
-  const wrap = vertical ? `translate(0 ${VB_W}) rotate(-90)` : undefined
-  const spin = vertical ? ' rotate(90)' : ''
+  // Portrait: rotate the landscape rink -90° and squash its long axis (sq).
+  // Chips/labels carry the inverse scale (+ counter-rotation) so they stay round
+  // and upright. PNG export strips both transforms → always clean landscape.
+  const sq = vertical ? MOBILE_RINK_SQUASH : 1
+  const VB_L = (VB_W * sq).toFixed(2)
+  const wrap = vertical ? `translate(0 ${VB_L}) rotate(-90) scale(${sq} 1)` : undefined
+  const spin = vertical ? `scale(${(1 / sq).toFixed(4)} 1) rotate(90)` : ''
   return (
     <svg
       ref={innerRef}
-      viewBox={vertical ? `0 0 ${VB_H} ${VB_W}` : `0 0 ${VB_W} ${VB_H}`}
+      viewBox={vertical ? `0 0 ${VB_H} ${VB_L}` : `0 0 ${VB_W} ${VB_H}`}
       preserveAspectRatio="xMidYMid meet"
       style={{ width: '100%', height: '100%', userSelect: 'none', touchAction: 'none' }}
     >
