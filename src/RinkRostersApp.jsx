@@ -863,7 +863,6 @@ export default function RinkRostersApp() {
           colors={colors}
         />
         <LineSelector view={view} lines={lines} onView={(patch) => setState(s => ({ ...s, view: { ...s.view, ...patch } }))} />
-        <ModeToggle moveMode={moveMode} onSet={setMoveMode} />
         <div
           onPointerDown={onRinkPointerDown}
           style={{
@@ -891,6 +890,7 @@ export default function RinkRostersApp() {
             }}
           />
         </div>
+        <ModeToggle moveMode={moveMode} onSet={setMoveMode} />
       </div>
 
       {/* Roster sidebar / drawer */}
@@ -1159,7 +1159,7 @@ function ModeToggle({ moveMode, onSet }) {
     transition: 'background 0.12s, color 0.12s',
   })
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', padding: '6px 8px', borderBottom: '1px solid #1f2937' }}>
+    <div style={{ display: 'flex', justifyContent: 'center', padding: '6px 8px', borderTop: '1px solid #1f2937' }}>
       <div style={{ display: 'flex', gap: 4, padding: 4, borderRadius: 999, background: '#0b1118', border: '1px solid #334155' }}>
         <button className="rr-mob-chip" onClick={() => onSet(false)} style={seg(!moveMode, '#38bdf8')}>✎ Edit names</button>
         <button className="rr-mob-chip" onClick={() => onSet(true)} style={seg(moveMode, '#fbbf24')}>✥ Move players</button>
