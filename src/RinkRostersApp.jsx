@@ -64,12 +64,13 @@ const SLOTS = {
     { key: 'P5', label: 'NF', x: 186, y: 42.5, pos: 'SKATER' }, // net-front
   ],
   // Penalty Kill (4 skaters, generic) -- box in D-zone, opened up for legibility.
+  // D pair sits well off the goalie so the crease isn't crowded.
   PK: [
     { key: 'G',  label: 'G',  x: 12, y: 42.5, pos: 'G' },
-    { key: 'K1', label: 'F',  x: 62, y: 20,   pos: 'SKATER' },
-    { key: 'K2', label: 'F',  x: 62, y: 65,   pos: 'SKATER' },
-    { key: 'K3', label: 'D',  x: 28, y: 28,   pos: 'SKATER' },
-    { key: 'K4', label: 'D',  x: 28, y: 57,   pos: 'SKATER' },
+    { key: 'K1', label: 'F',  x: 70, y: 20,   pos: 'SKATER' },
+    { key: 'K2', label: 'F',  x: 70, y: 65,   pos: 'SKATER' },
+    { key: 'K3', label: 'D',  x: 42, y: 28,   pos: 'SKATER' },
+    { key: 'K4', label: 'D',  x: 42, y: 57,   pos: 'SKATER' },
   ],
 }
 
