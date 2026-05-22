@@ -79,6 +79,12 @@ const POSITION_FAMILY = { C: 'F', LW: 'F', RW: 'F', LD: 'D', RD: 'D', G: 'G' }
 const STORAGE_KEY = 'rinkrosters.v1'
 const TEAMS_KEY = 'rinkrosters.teams.v1'
 
+// "My Teams" (named local snapshots) is hidden for now: it's slated to move to
+// account sign-in + Supabase cloud sync for real cross-device security. Flip to
+// true to re-expose the existing local-storage version. Hiding only removes the
+// UI entry point — the autosave working copy and any saved snapshots are kept.
+const ENABLE_MY_TEAMS = false
+
 // Fixed ice tint — no longer user-configurable (jersey-only color model).
 const ICE_FILL = '#eaf2fb'
 // SVG margin (ft) around the rink inside the viewBox; shared by render + hit-test.
@@ -996,8 +1002,8 @@ export default function RinkRostersApp() {
       {/* Ice controls help */}
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
 
-      {/* My Teams (named local saves) */}
-      {teamsOpen && (
+      {/* My Teams (named local saves) — hidden pending account + Supabase sync */}
+      {ENABLE_MY_TEAMS && teamsOpen && (
         <TeamsModal
           teams={teams}
           rosterCount={roster.length}
@@ -1118,7 +1124,9 @@ function Header({ view, format, onView, onFormat, onExportPng, onOpenTeams, onRe
       )}
       <div style={{ flex: 1 }} />
       <ColorChip label="Jersey" value={colors.jerseyPrimary} onClick={() => onPickColor('jerseyPrimary')} />
-      <button onClick={onOpenTeams} style={{ ...btn, color: '#4cc2ff', borderColor: '#1e3a8a' }}>Teams</button>
+      {ENABLE_MY_TEAMS && (
+        <button onClick={onOpenTeams} style={{ ...btn, color: '#4cc2ff', borderColor: '#1e3a8a' }}>Teams</button>
+      )}
       <button onClick={onAutoFill} style={{ ...btn, color: '#86efac', borderColor: '#14532d' }} title="Fill Power Play & Penalty Kill units from your roster">Auto PP/PK</button>
       <button onClick={onExportPng} style={btn}>Download Lineup</button>
       <button onClick={onReset} style={{ ...btn, color: '#fca5a5', borderColor: '#7f1d1d' }}>Reset</button>
