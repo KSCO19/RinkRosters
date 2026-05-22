@@ -204,6 +204,39 @@ function isEligible(player, slot) {
   return elig.includes(slot.pos)
 }
 
+// Sensible default eligibility for a player created by typing directly into an
+// empty rink slot, so the freshly placed chip doesn't immediately show the
+// off-position warning ring. Coaches refine it later via the details editor.
+function defaultEligForSlot(slot) {
+  if (!slot) return []
+  if (slot.pos === 'G') return ['G']
+  if (slot.key === 'D') return ['LD', 'RD'] // 3v3 combined D accepts either
+  if (slot.pos === 'SKATER') return ['C']   // PP/PK generic skater
+  return [slot.pos]
+}
+
+// Pointer travel (screen px) below which a press counts as a tap, not a drag.
+// Finger-friendly: a deliberate tap jitters a few px; a real drag clears this.
+const TAP_SLOP = 5
+
+// Pure: return a new `lines` object with `playerId` written into `target`'s slot.
+// Shared by drag-drop assignment and create-and-place so both stay in lockstep.
+function placeInLines(lines, target, playerId) {
+  const next = { ...lines }
+  if (target.kind === 'ES_F') {
+    next.forwards = next.forwards.map((f, i) => i === target.lineIdx ? { ...f, [target.role]: playerId } : f)
+  } else if (target.kind === 'ES_D') {
+    next.defense = next.defense.map((d, i) => i === target.pairIdx ? { ...d, [target.role]: playerId } : d)
+  } else if (target.kind === 'PP') {
+    next.pp = next.pp.map((u, i) => i === target.unitIdx ? { ...u, slots: u.slots.map((p, j) => j === target.slotIdx ? playerId : p) } : u)
+  } else if (target.kind === 'PK') {
+    next.pk = next.pk.map((u, i) => i === target.unitIdx ? { ...u, slots: u.slots.map((p, j) => j === target.slotIdx ? playerId : p) } : u)
+  } else if (target.kind === 'G') {
+    next.goalies = { ...next.goalies, [target.role]: playerId }
+  }
+  return next
+}
+
 // Mobile-only chip nudges (landscape ft) so chips clear the rink lines/faceoff
 // circles once the portrait squash tightens spacing. Verified to clear all
 // lines/circles across ES 5v5 / 4v4 / 3v3. Keyed by slot.key; only render +
@@ -299,7 +332,9 @@ export default function RinkRostersApp() {
   const rosterRef = useRef(null)
   const [pickerFor, setPickerFor] = useState(null) // 'jerseyPrimary' | null
   const [editPlayerId, setEditPlayerId] = useState(null) // open the edit modal for this player
-  const [actionMenu, setActionMenu] = useState(null) // { source, playerId, x, y } — tap on a rink chip
+  // Tap on a rink slot opens an inline name editor at the tap point.
+  // { source, slotKey, playerId|null, x, y } — playerId null ⇒ empty slot (create + place).
+  const [inlineEdit, setInlineEdit] = useState(null)
   const [teamsOpen, setTeamsOpen] = useState(false)
   const [teams, setTeams] = useState(loadTeams)
 
@@ -403,25 +438,22 @@ export default function RinkRostersApp() {
   function assignToSlot(target, playerId) {
     const player = playerById(playerId)
     if (!player) return false
-    const slot = resolveSlotDef(target)
-    if (!slot) return false
-
-    setState(s => {
-      const lines = { ...s.lines }
-      if (target.kind === 'ES_F') {
-        lines.forwards = lines.forwards.map((f, i) => i === target.lineIdx ? { ...f, [target.role]: playerId } : f)
-      } else if (target.kind === 'ES_D') {
-        lines.defense = lines.defense.map((d, i) => i === target.pairIdx ? { ...d, [target.role]: playerId } : d)
-      } else if (target.kind === 'PP') {
-        lines.pp = lines.pp.map((u, i) => i === target.unitIdx ? { ...u, slots: u.slots.map((p, j) => j === target.slotIdx ? playerId : p) } : u)
-      } else if (target.kind === 'PK') {
-        lines.pk = lines.pk.map((u, i) => i === target.unitIdx ? { ...u, slots: u.slots.map((p, j) => j === target.slotIdx ? playerId : p) } : u)
-      } else if (target.kind === 'G') {
-        lines.goalies = { ...lines.goalies, [target.role]: playerId }
-      }
-      return { ...s, lines }
-    })
+    if (!resolveSlotDef(target)) return false
+    setState(s => ({ ...s, lines: placeInLines(s.lines, target, playerId) }))
     return true
+  }
+
+  // Create a brand-new roster player from a typed name and drop them straight
+  // into the slot — the empty-slot inline-edit path. Done in one setState so the
+  // roster append and the line placement land together (and the new chip shows
+  // immediately). Eligibility defaults to the slot's natural position.
+  function createAndPlace(target, slot, name) {
+    const player = normalizePlayer({ id: newId(), name, eligibility: defaultEligForSlot(slot), handedness: 'R' })
+    setState(s => ({
+      ...s,
+      roster: s.roster.concat([player]),
+      lines: placeInLines(s.lines, target, player.id),
+    }))
   }
 
   function clearSlot(target) {
@@ -481,12 +513,15 @@ export default function RinkRostersApp() {
   // surfaces so iOS/Android don't hijack the gesture for scrolling. The
   // gesture state lives in refs (60Hz writes); only the floating ghost +
   // hovered slot trigger React renders.
+  // playerId may be null: an empty rink slot still starts a gesture so a clean
+  // tap can open the inline name editor (create + place). With no player there's
+  // nothing to drag, so no ghost is shown and a move is a no-op on release.
   function beginDrag(e, sourceDesc, playerId) {
-    if (!playerId) return
     e.preventDefault?.()
     const pt = pointerXY(e)
-    dragRef.current = { source: sourceDesc, playerId, startX: pt.x, startY: pt.y, moved: false }
-    setDragGhost({ playerId, x: pt.x, y: pt.y })
+    dragRef.current = { source: sourceDesc, playerId: playerId || null, startX: pt.x, startY: pt.y, moved: false }
+    // Ghost + hover rings only appear once the press becomes a real drag (see
+    // onDragMove), so a tap reads as a clean click with no flicker.
     window.addEventListener('pointermove', onDragMove, { passive: false })
     window.addEventListener('pointerup', onDragEnd, { passive: false })
     window.addEventListener('pointercancel', onDragEnd, { passive: false })
@@ -499,9 +534,12 @@ export default function RinkRostersApp() {
     e.preventDefault?.()
     const pt = pointerXY(e)
     const dx = Math.abs(pt.x - d.startX), dy = Math.abs(pt.y - d.startY)
-    if (!d.moved && (dx > 3 || dy > 3)) d.moved = true
-    setDragGhost(g => g ? { ...g, x: pt.x, y: pt.y } : g)
-    setHoverSlot(detectHover(pt))
+    if (!d.moved && (dx > TAP_SLOP || dy > TAP_SLOP)) d.moved = true
+    if (d.moved && d.playerId) {
+      // Real drag of a real player: show the ghost + live slot highlighting.
+      setDragGhost({ playerId: d.playerId, x: pt.x, y: pt.y })
+      setHoverSlot(detectHover(pt))
+    }
   }
   function onDragEnd(e) {
     const d = dragRef.current
@@ -511,20 +549,22 @@ export default function RinkRostersApp() {
     window.removeEventListener('touchmove', preventDefault)
     if (!d) { setDragGhost(null); setHoverSlot(null); return }
     const pt = pointerXY(e)
-    const hover = detectHover(pt)
     dragRef.current = null
     setDragGhost(null)
     setHoverSlot(null)
 
-    // Tap (no movement) on a bench player opens the edit modal; on a rink
-    // chip it opens a small action menu (Edit / Remove / Cancel). Drag
-    // (moved) commits the drop and is handled below.
+    // Tap (no movement): a bench player opens the full edit modal; a rink slot
+    // opens the inline name editor at the tap point — to rename the player there
+    // or, on an empty slot, type a name that creates + places a new player.
     if (!d.moved) {
       if (d.source.kind === 'BENCH') setEditPlayerId(d.playerId)
-      else setActionMenu({ source: d.source, playerId: d.playerId, x: pt.x, y: pt.y })
+      else setInlineEdit({ source: d.source, slotKey: d.source.slotKey, playerId: d.playerId, x: pt.x, y: pt.y })
       return
     }
 
+    // Past here it's a real drag; an empty slot has nothing to drop.
+    if (!d.playerId) return
+    const hover = detectHover(pt)
     if (hover === 'BENCH') {
       // Drop back to bench: clear the source slot if we came from the rink.
       if (d.source.kind !== 'BENCH') clearSlot(d.source)
@@ -747,19 +787,18 @@ export default function RinkRostersApp() {
             colors={colors}
             vertical={vertical}
             hoverSlot={hoverSlot && hoverSlot.kind === 'RINK_SLOT' ? hoverSlot.slotKey : null}
-            dragPlayerId={dragRef.current?.playerId || null}
+            dragPlayerId={dragGhost?.playerId || null}
             isDragEligible={(slotKey) => {
-              const d = dragRef.current
-              if (!d) return null
+              if (!dragGhost) return null
               const slot = activeUnit.slots.find(s => s.key === slotKey)
-              return slot ? isEligible(playerById(d.playerId), slot) : null
+              return slot ? isEligible(playerById(dragGhost.playerId), slot) : null
             }}
             onSlotPointerDown={(e, slotKey) => {
-              const pid = activeUnit.filled[slotKey]
-              if (!pid) return
               const target = rinkSlotToTarget(slotKey)
               if (!target) return
-              beginDrag(e, target, pid)
+              // pid is null for an empty slot — beginDrag still arms the tap so
+              // releasing without a drag opens the inline editor to create a player.
+              beginDrag(e, { ...target, slotKey }, activeUnit.filled[slotKey] || null)
             }}
           />
         </div>
@@ -774,7 +813,7 @@ export default function RinkRostersApp() {
         view={view}
         colors={colors}
         hoverBench={hoverSlot === 'BENCH'}
-        dragPlayerId={dragRef.current?.playerId || null}
+        dragPlayerId={dragGhost?.playerId || null}
         onBeginDrag={(e, pid) => beginDrag(e, { kind: 'BENCH' }, pid)}
         onAddPlayer={() => setEditPlayerId('NEW')}
         onEditPlayer={(id) => setEditPlayerId(id)}
@@ -830,19 +869,30 @@ export default function RinkRostersApp() {
         />
       )}
 
-      {/* Rink-chip action menu */}
-      {actionMenu && (() => {
-        const p = playerById(actionMenu.playerId)
-        if (!p) return null
+      {/* Inline name editor (tap a rink slot) */}
+      {inlineEdit && (() => {
+        const isNew = !inlineEdit.playerId
+        const p = isNew ? null : playerById(inlineEdit.playerId)
+        const slot = activeUnit.slots.find(s => s.key === inlineEdit.slotKey)
         return (
-          <ActionMenu
-            player={p}
-            colors={colors}
-            x={actionMenu.x}
-            y={actionMenu.y}
-            onEdit={() => { setEditPlayerId(actionMenu.playerId); setActionMenu(null) }}
-            onRemove={() => { clearSlot(actionMenu.source); setActionMenu(null) }}
-            onClose={() => setActionMenu(null)}
+          <InlineNameEditor
+            initialName={p?.name || ''}
+            slotLabel={slot?.label || ''}
+            isNew={isNew}
+            x={inlineEdit.x}
+            y={inlineEdit.y}
+            onCommit={(name) => {
+              const trimmed = name.trim()
+              if (isNew) {
+                if (trimmed) createAndPlace(inlineEdit.source, slot, trimmed)
+              } else {
+                updatePlayer(inlineEdit.playerId, { name: trimmed })
+              }
+              setInlineEdit(null)
+            }}
+            onRemove={isNew ? null : () => { clearSlot(inlineEdit.source); setInlineEdit(null) }}
+            onDetails={isNew ? null : () => { setEditPlayerId(inlineEdit.playerId); setInlineEdit(null) }}
+            onCancel={() => setInlineEdit(null)}
           />
         )
       })()}
@@ -1038,10 +1088,14 @@ function Rink({ innerRef, slots, filled, playerById, colors, hoverSlot, dragPlay
         )
       })}
 
-      {/* Empty slot labels (subtle, only when slot is empty) */}
+      {/* Empty slots: tappable. A clean tap opens the inline editor to type a
+          name (creates + places a player). The transparent disc is the touch
+          target — fill:transparent receives pointer events, fill:none would not. */}
       {slots.map(s => filled[s.key] ? null : (
-        <g key={'lbl-' + s.key} pointerEvents="none" transform={`translate(${s.x + M},${s.y + M})`}>
-          <g data-spin transform={spin || undefined}>
+        <g key={'lbl-' + s.key} transform={`translate(${s.x + M},${s.y + M})`}
+          style={{ cursor: 'pointer' }} onPointerDown={(e) => onSlotPointerDown(e, s.key)}>
+          <circle cx="0" cy="0" r="8" fill="transparent" />
+          <g data-spin transform={spin || undefined} pointerEvents="none">
             <circle cx="0" cy="0" r="5" fill="none" stroke="rgba(11,17,24,0.35)" strokeWidth="0.3" strokeDasharray="1 0.6" />
             <text x="0" y="1.4" textAnchor="middle" fontSize="3.2" fill="rgba(11,17,24,0.55)" style={{ fontFamily: 'system-ui, -apple-system, sans-serif', fontWeight: 700 }}>
               {s.label}
@@ -1593,40 +1647,59 @@ function TeamsModal({ teams, rosterCount, onSaveNew, onOverwrite, onLoad, onRena
 // ════════════════════════════════════════════════════════════════════════════
 // Action menu (fires when a rink chip is tapped — gives Edit / Remove / Cancel)
 // ════════════════════════════════════════════════════════════════════════════
-function ActionMenu({ player, colors, x, y, onEdit, onRemove, onClose }) {
-  const W = 200, H = 168, GAP = 14
-  const left = Math.max(8, Math.min((typeof window !== 'undefined' ? window.innerWidth : 800) - W - 8, x - W / 2))
-  const top  = Math.max(8, Math.min((typeof window !== 'undefined' ? window.innerHeight : 600) - H - 8, y + GAP))
+// Small floating name field anchored at the tap point on a rink slot. Enter or
+// tapping away commits (so a typed name sticks without a confirm step); Escape
+// or the backdrop on an untouched field cancels. For an existing chip it also
+// offers Remove (clear the slot) and Details (full player modal).
+function InlineNameEditor({ initialName, slotLabel, isNew, x, y, onCommit, onRemove, onDetails, onCancel }) {
+  const [val, setVal] = useState(initialName)
+  const inputRef = useRef(null)
+  useEffect(() => { const el = inputRef.current; if (el) { el.focus(); el.select() } }, [])
+
+  const W = 230, GAP = 16
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 800
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 600
+  const left = Math.max(8, Math.min(vw - W - 8, x - W / 2))
+  const top  = Math.max(8, Math.min(vh - 120, y + GAP))
+
+  function commit() { onCommit(val) }
+  function onKeyDown(e) {
+    if (e.key === 'Enter') { e.preventDefault(); commit() }
+    else if (e.key === 'Escape') { e.preventDefault(); onCancel() }
+  }
   const btn = {
-    width: '100%', padding: '10px 12px', textAlign: 'left',
-    background: '#0b1118', color: '#e2e8f0',
-    border: '1px solid #1f2937', borderRadius: 6,
-    fontSize: 13, fontWeight: 600, cursor: 'pointer',
+    flex: 1, padding: '7px 10px', fontSize: 12, fontWeight: 600,
+    background: '#0b1118', color: '#94a3b8',
+    border: '1px solid #1f2937', borderRadius: 6, cursor: 'pointer',
   }
   return (
-    <div onMouseDown={onClose} onTouchStart={onClose}
+    <div onMouseDown={onCancel} onTouchStart={onCancel}
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.25)', zIndex: 200 }}>
       <div onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}
         style={{
           position: 'absolute', left, top, width: W,
           background: '#0e1722', border: '1px solid #1f2937', borderRadius: 10,
           padding: 10, boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
-          display: 'flex', flexDirection: 'column', gap: 6,
+          display: 'flex', flexDirection: 'column', gap: 8,
         }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 4px 6px', borderBottom: '1px solid #1f2937', marginBottom: 4 }}>
-          <JerseyChip player={player} colors={colors} size={32} />
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {player.name || 'Unnamed'}
-            </div>
-            <div style={{ fontSize: 10, color: '#94a3b8' }}>
-              #{player.number || '—'} · {player.handedness}
-            </div>
-          </div>
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6, color: '#64748b', textTransform: 'uppercase' }}>
+          {isNew ? `New player · ${slotLabel}` : `Name · ${slotLabel}`}
         </div>
-        <button onClick={onEdit} style={btn}>Edit player</button>
-        <button onClick={onRemove} style={{ ...btn, color: '#fca5a5', borderColor: '#7f1d1d' }}>Remove from slot</button>
-        <button onClick={onClose} style={{ ...btn, color: '#94a3b8' }}>Cancel</button>
+        <input
+          ref={inputRef}
+          value={val}
+          onChange={(e) => setVal(e.target.value.slice(0, 30))}
+          onKeyDown={onKeyDown}
+          placeholder="Player name"
+          style={{ ...inputStyle, fontSize: 14 }}
+        />
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={commit} style={{ ...btn, background: '#0ea5e9', color: '#0b1118', borderColor: '#0ea5e9', fontWeight: 700 }}>
+            {isNew ? 'Add' : 'Save'}
+          </button>
+          {onDetails && <button onClick={onDetails} style={btn}>Details</button>}
+          {onRemove && <button onClick={onRemove} style={{ ...btn, color: '#fca5a5', borderColor: '#7f1d1d' }}>Remove</button>}
+        </div>
       </div>
     </div>
   )
