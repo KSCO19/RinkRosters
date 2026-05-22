@@ -650,6 +650,39 @@ export default function RinkRostersApp() {
     return null
   }
 
+  // Which slot did a press land on? Same getScreenCTM mapping as detectHover but
+  // a tighter radius (a press should be near a token, not just anywhere on ice).
+  function hitSlot(pt) {
+    const g = rinkGroupRef.current, svg = rinkRef.current
+    if (!g || !svg || !g.getScreenCTM || !svg.createSVGPoint) return null
+    const ctm = g.getScreenCTM()
+    if (!ctm) return null
+    const sp = svg.createSVGPoint(); sp.x = pt.x; sp.y = pt.y
+    const lp = sp.matrixTransform(ctm.inverse())
+    let best = null, bestD = Infinity
+    for (const s of dispSlots) {
+      const dx = (s.x + RINK_M) - lp.x, dy = (s.y + RINK_M) - lp.y
+      const d2 = dx*dx + dy*dy
+      if (d2 < bestD) { bestD = d2; best = s }
+    }
+    return best && bestD < 10 * 10 ? best.key : null
+  }
+
+  // Single pointer entry point for the whole rink. Handling the press on the
+  // rink container (an HTML div) instead of the individual SVG shapes sidesteps
+  // flaky touch/pointer delivery on inline SVG elements — the press always lands
+  // on one reliable surface, and getScreenCTM tells us which token/slot it hit.
+  function onRinkPointerDown(e) {
+    const pt = pointerXY(e)
+    const slotKey = hitSlot(pt)
+    if (!slotKey) return
+    const pid = activeUnit.filled[slotKey] || null
+    if (moveMode && !pid) return // nothing to relocate on an empty slot
+    const target = rinkSlotToTarget(slotKey)
+    if (!target) return
+    beginDrag(e, { ...target, slotKey }, pid, moveMode)
+  }
+
   function sameSlot(a, b) {
     if (!a || !b || a.kind !== b.kind) return false
     if (a.kind === 'ES_F') return a.lineIdx === b.lineIdx && a.role === b.role
@@ -806,17 +839,19 @@ export default function RinkRostersApp() {
         />
         <LineSelector view={view} lines={lines} onView={(patch) => setState(s => ({ ...s, view: { ...s.view, ...patch } }))} />
         <ModeToggle moveMode={moveMode} onSet={setMoveMode} />
-        <div style={{
-          flex: 1, minHeight: 0, position: 'relative', display: 'flex', alignItems: 'stretch', justifyContent: 'center',
-          // Amber inset ring while Move mode is active — a second, ambient cue
-          // (beyond the segmented toggle) that drag-to-reposition is live.
-          boxShadow: moveMode ? 'inset 0 0 0 3px #fbbf24' : 'none',
-          transition: 'box-shadow 0.12s',
-        }}>
+        <div
+          onPointerDown={onRinkPointerDown}
+          style={{
+            flex: 1, minHeight: 0, position: 'relative', display: 'flex', alignItems: 'stretch', justifyContent: 'center',
+            touchAction: 'none', cursor: moveMode ? 'grab' : 'pointer',
+            // Amber inset ring while Move mode is active — a second, ambient cue
+            // (beyond the segmented toggle) that drag-to-reposition is live.
+            boxShadow: moveMode ? 'inset 0 0 0 3px #fbbf24' : 'none',
+            transition: 'box-shadow 0.12s',
+          }}>
           <Rink
             innerRef={rinkRef}
             groupRef={rinkGroupRef}
-            moveMode={moveMode}
             slots={dispSlots}
             filled={activeUnit.filled}
             playerById={playerById}
@@ -828,17 +863,6 @@ export default function RinkRostersApp() {
               if (!dragGhost) return null
               const slot = activeUnit.slots.find(s => s.key === slotKey)
               return slot ? isEligible(playerById(dragGhost.playerId), slot) : null
-            }}
-            onSlotPointerDown={(e, slotKey) => {
-              const pid = activeUnit.filled[slotKey] || null
-              // Move mode only relocates existing tokens — an empty slot has
-              // nothing to drag, so ignore it (the Edit-mode tap creates players).
-              if (moveMode && !pid) return
-              const target = rinkSlotToTarget(slotKey)
-              if (!target) return
-              // pid null (Edit mode, empty slot) still arms the tap so releasing
-              // without a drag opens the inline editor to create a player.
-              beginDrag(e, { ...target, slotKey }, pid, moveMode)
             }}
           />
         </div>
@@ -1116,7 +1140,7 @@ function ModeToggle({ moveMode, onSet }) {
   )
 }
 
-function Rink({ innerRef, groupRef, moveMode, slots, filled, playerById, colors, hoverSlot, dragPlayerId, isDragEligible, onSlotPointerDown, vertical }) {
+function Rink({ innerRef, groupRef, slots, filled, playerById, colors, hoverSlot, dragPlayerId, isDragEligible, vertical }) {
   // viewBox uses a small margin around the rink so corner radius and the
   // boards' stroke have somewhere to live. Rink geometry is authored landscape
   // (200×85 ft, ~2.35:1). On mobile we render portrait by swapping the viewBox
@@ -1140,7 +1164,9 @@ function Rink({ innerRef, groupRef, moveMode, slots, filled, playerById, colors,
       ref={innerRef}
       viewBox={vertical ? `0 0 ${VB_H} ${VB_L}` : `0 0 ${VB_W} ${VB_H}`}
       preserveAspectRatio="xMidYMid meet"
-      style={{ width: '100%', height: '100%', userSelect: 'none', touchAction: 'none' }}
+      // pointerEvents none: the rink container (an HTML div) owns all pressing
+      // and dragging now (see onRinkPointerDown) — the SVG is purely visual.
+      style={{ width: '100%', height: '100%', userSelect: 'none', touchAction: 'none', pointerEvents: 'none' }}
     >
       <g data-rink-rotate ref={groupRef} transform={wrap}>
       {/* Boards / ice surface */}
@@ -1172,15 +1198,10 @@ function Rink({ innerRef, groupRef, moveMode, slots, filled, playerById, colors,
         )
       })}
 
-      {/* Empty slots: tappable. A clean tap opens the inline editor to type a
-          name (creates + places a player). The transparent disc is the touch
-          target — fill:transparent receives pointer events, fill:none would not. */}
+      {/* Empty slot labels (purely visual; presses are handled by the container). */}
       {slots.map(s => filled[s.key] ? null : (
-        <g key={'lbl-' + s.key} transform={`translate(${s.x + M},${s.y + M})`}
-          style={{ cursor: moveMode ? 'default' : 'pointer', touchAction: 'none' }}
-          onPointerDown={(e) => onSlotPointerDown(e, s.key)}>
-          <circle cx="0" cy="0" r="8" fill="transparent" />
-          <g data-spin transform={spin || undefined} pointerEvents="none">
+        <g key={'lbl-' + s.key} transform={`translate(${s.x + M},${s.y + M})`}>
+          <g data-spin transform={spin || undefined}>
             <circle cx="0" cy="0" r="5" fill="none" stroke="rgba(11,17,24,0.35)" strokeWidth="0.3" strokeDasharray="1 0.6" />
             <text x="0" y="1.4" textAnchor="middle" fontSize="3.2" fill="rgba(11,17,24,0.55)" style={{ fontFamily: 'system-ui, -apple-system, sans-serif', fontWeight: 700 }}>
               {s.label}
@@ -1197,11 +1218,7 @@ function Rink({ innerRef, groupRef, moveMode, slots, filled, playerById, colors,
         if (!p) return null
         const offPos = !isEligible(p, s) // soft position lock → warning ring
         return (
-          <g key={'chip-' + s.key}
-            transform={`translate(${s.x + M},${s.y + M})`}
-            style={{ cursor: moveMode ? 'grab' : 'pointer', touchAction: 'none' }}
-            onPointerDown={(e) => onSlotPointerDown(e, s.key)}
-          >
+          <g key={'chip-' + s.key} transform={`translate(${s.x + M},${s.y + M})`}>
             <g data-spin transform={spin || undefined}>
               {offPos && (
                 <circle cx="0" cy="0" r="6.8" fill="none" stroke="#f59e0b" strokeWidth="0.6" strokeDasharray="1.2 0.8" />
