@@ -1013,8 +1013,10 @@ function Rink({ innerRef, slots, filled, playerById, colors, hoverSlot, dragPlay
       <RinkBoards ice={ICE_FILL} M={M} />
       {/* Lines, dots, circles, creases, trapezoids — all NHL-correct. cs is the
           per-circle counter-scale that keeps faceoff circles round under the
-          mobile long-axis squash ('' on desktop → unchanged). */}
-      <RinkMarkings M={M} cs={vertical ? ` scale(${(1 / sq).toFixed(4)} 1)` : ''} />
+          mobile long-axis squash ('' on desktop → unchanged). foR shrinks the
+          faceoff radius in step with the squash so the round circles still fit
+          inside the (now shorter) end zones instead of crashing the boards. */}
+      <RinkMarkings M={M} cs={vertical ? ` scale(${(1 / sq).toFixed(4)} 1)` : ''} foR={RINK.FACEOFF_R * sq} />
 
       {/* Slot drop targets (rendered above markings, below chips) */}
       {slots.map(s => {
@@ -1098,7 +1100,7 @@ function RinkBoards({ ice, M }) {
   )
 }
 
-function RinkMarkings({ M, cs = '' }) {
+function RinkMarkings({ M, cs = '', foR = RINK.FACEOFF_R }) {
   const red = '#dc2626'
   const blue = '#1d4ed8'
   return (
@@ -1117,22 +1119,24 @@ function RinkMarkings({ M, cs = '' }) {
           strips data-spin → correct round circle in the landscape export. */}
       <g transform={`translate(${M + RINK.RED} ${M + RINK.H / 2})`}>
         <g data-spin transform={cs || undefined}>
-          <circle cx="0" cy="0" r={RINK.FACEOFF_R} fill="none" stroke={blue} strokeWidth="0.35" />
+          <circle cx="0" cy="0" r={foR} fill="none" stroke={blue} strokeWidth="0.35" />
         </g>
       </g>
       <circle cx={M + RINK.RED} cy={M + RINK.H/2} r="0.8" fill={blue} />
 
-      {/* Zone faceoff circles (4) + dots */}
-      {[
-        [RINK.ZONE_DOT_X_L, RINK.DOT_Y_T],
-        [RINK.ZONE_DOT_X_L, RINK.DOT_Y_B],
-        [RINK.ZONE_DOT_X_R, RINK.DOT_Y_T],
-        [RINK.ZONE_DOT_X_R, RINK.DOT_Y_B],
-      ].map(([x, y], i) => (
+      {/* Zone faceoff circles (4) + dots. On mobile, the long-axis squash pushes
+          these toward the rounded end corners, so nudge them inward (toward
+          center) to keep the round circles off the boards. Desktop: inset 0. */}
+      {(() => { const ins = cs ? 8 : 0; return [
+        [RINK.ZONE_DOT_X_L + ins, RINK.DOT_Y_T],
+        [RINK.ZONE_DOT_X_L + ins, RINK.DOT_Y_B],
+        [RINK.ZONE_DOT_X_R - ins, RINK.DOT_Y_T],
+        [RINK.ZONE_DOT_X_R - ins, RINK.DOT_Y_B],
+      ] })().map(([x, y], i) => (
         <g key={i}>
           <g transform={`translate(${M + x} ${M + y})`}>
             <g data-spin transform={cs || undefined}>
-              <circle cx="0" cy="0" r={RINK.FACEOFF_R} fill="none" stroke={red} strokeWidth="0.35" />
+              <circle cx="0" cy="0" r={foR} fill="none" stroke={red} strokeWidth="0.35" />
             </g>
           </g>
           <circle cx={M + x} cy={M + y} r="0.8" fill={red} />
