@@ -723,6 +723,41 @@ export default function RinkRostersApp() {
     setState(s => ({ ...s, lines: emptyState().lines, positions: {} }))
   }
 
+  // ── Auto-fill PP / PK from the roster ─────────────────────────────────────
+  // Seeds both PP units (5 skaters, a D at the point + forwards) and both PK
+  // units (2 forwards up top, 2 D in the box) from the roster, in roster order.
+  // No skill data exists, so this is a sensible starting layout the coach then
+  // tweaks — distinct players within each special-teams group; PP and PK draw
+  // independently (a two-way player can appear on both, as in real hockey).
+  function autoFillSpecialTeams() {
+    const skaters = roster.filter(p => (p.eligibility || []).some(e => e !== 'G'))
+    if (skaters.length === 0) { window.alert('Add some skaters to your roster first, then auto-fill.'); return }
+    const hasExisting = lines.pp.some(u => u.slots.some(Boolean)) || lines.pk.some(u => u.slots.some(Boolean))
+    if (hasExisting && !window.confirm('Auto-fill will replace your current Power Play and Penalty Kill units. Continue?')) return
+
+    const isF = p => (p.eligibility || []).some(e => e === 'C' || e === 'LW' || e === 'RW')
+    const isD = p => (p.eligibility || []).some(e => e === 'LD' || e === 'RD')
+    const buildUnits = (count, pattern) => {
+      const forwards = skaters.filter(isF)
+      const defense = skaters.filter(isD)
+      const used = new Set()
+      const take = pool => { for (const p of pool) if (!used.has(p.id)) { used.add(p.id); return p.id } return null }
+      const units = []
+      for (let u = 0; u < count; u++) {
+        const slots = pattern.map(role => take(role === 'D' ? defense : forwards))
+        // Backfill any slot still empty (e.g. ran out of a position) with any skater.
+        for (let i = 0; i < slots.length; i++) if (!slots[i]) slots[i] = take(skaters)
+        units.push({ slots })
+      }
+      return units
+    }
+    // PP slots: point, L wall, bumper, R wall, net-front. PK slots: F, F, D, D.
+    const pp = buildUnits(2, ['D', 'F', 'F', 'F', 'F'])
+    const pk = buildUnits(2, ['F', 'F', 'D', 'D'])
+    // Jump to the Power Play view so the fill is immediately visible.
+    setState(s => ({ ...s, lines: { ...s.lines, pp, pk }, view: { ...s.view, mode: 'PP', selectedUnit: 0 } }))
+  }
+
   // ── Named local saves ("My Teams") ──────────────────────────────────────
   function commitTeams(next) { setTeams(next); persistTeams(next) }
   function saveCurrentAsTeam(name) {
@@ -860,6 +895,7 @@ export default function RinkRostersApp() {
           onExportPng={exportPng}
           onOpenTeams={() => setTeamsOpen(true)}
           onReset={resetLineup}
+          onAutoFill={autoFillSpecialTeams}
           onPickColor={setPickerFor}
           colors={colors}
         />
@@ -1051,7 +1087,7 @@ function useScreen() {
 // ════════════════════════════════════════════════════════════════════════════
 // Header
 // ════════════════════════════════════════════════════════════════════════════
-function Header({ view, format, onView, onFormat, onExportPng, onOpenTeams, onReset, onPickColor, colors }) {
+function Header({ view, format, onView, onFormat, onExportPng, onOpenTeams, onReset, onAutoFill, onPickColor, colors }) {
   const tabBtn = (label, mode) => (
     <button onClick={() => onView({ mode })}
       style={{
@@ -1083,6 +1119,7 @@ function Header({ view, format, onView, onFormat, onExportPng, onOpenTeams, onRe
       <div style={{ flex: 1 }} />
       <ColorChip label="Jersey" value={colors.jerseyPrimary} onClick={() => onPickColor('jerseyPrimary')} />
       <button onClick={onOpenTeams} style={{ ...btn, color: '#4cc2ff', borderColor: '#1e3a8a' }}>Teams</button>
+      <button onClick={onAutoFill} style={{ ...btn, color: '#86efac', borderColor: '#14532d' }} title="Fill Power Play & Penalty Kill units from your roster">Auto PP/PK</button>
       <button onClick={onExportPng} style={btn}>Download Lineup</button>
       <button onClick={onReset} style={{ ...btn, color: '#fca5a5', borderColor: '#7f1d1d' }}>Reset</button>
     </div>
@@ -1200,6 +1237,7 @@ function HelpModal({ onClose }) {
         <Row icon="✥" title="Move players" body="With Move players on, drag any spot — a player or an empty position marker — anywhere on the ice. It stays exactly where you lift your finger." />
         <Row icon="🗑" title="Remove" body="In Move players mode, drag a player down onto the Roster drawer to take them off the ice (they stay in your roster)." />
         <Row icon="🏒" title="Lines & special teams" body="The Even Strength / Power Play / Penalty Kill tabs each have their own layout. Pick the line, pair, or unit in the row above the rink." />
+        <Row icon="⚡" title="Auto PP/PK" body="“Auto PP/PK” in the header fills both Power Play and Penalty Kill units from your roster (a D at the point + forwards on the PP, forwards and D on the PK) as a starting point you can tweak." />
         <Row icon="⬇" title="Download & Reset" body="“Download Lineup” saves the current view as an image. “Reset” clears all players and custom positions back to the default spots (your roster is kept)." />
         <button onClick={onClose}
           style={{ alignSelf: 'flex-end', padding: '8px 16px', background: '#0ea5e9', color: '#0b1118', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>
