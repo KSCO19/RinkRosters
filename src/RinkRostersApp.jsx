@@ -204,6 +204,26 @@ function isEligible(player, slot) {
   return elig.includes(slot.pos)
 }
 
+// Mobile-only chip nudges (landscape ft) so chips clear the rink lines/faceoff
+// circles once the portrait squash tightens spacing. Verified to clear all
+// lines/circles across ES 5v5 / 4v4 / 3v3. Keyed by slot.key; only render +
+// hit-test positions shift (slot keys/targets are unchanged). Desktop: no-op.
+const MOBILE_SLOT_NUDGE = {
+  G:  { dx: 10, dy: 0 },
+  LW: { dx: -10, dy: 0 },
+  RW: { dx: -10, dy: 0 },
+  F1: { dx: -11, dy: 0 },
+  F2: { dx: -11, dy: 0 },
+  D:  { dx: 0, dy: -9 },
+}
+function nudgeSlots(slots, vertical) {
+  if (!vertical) return slots
+  return slots.map(s => {
+    const n = MOBILE_SLOT_NUDGE[s.key]
+    return n ? { ...s, x: s.x + n.dx, y: s.y + n.dy } : s
+  })
+}
+
 // ─── Color helpers ────────────────────────────────────────────────────────────
 function readableOn(hex) {
   // Pick black or white for max contrast against a hex background.
@@ -280,10 +300,8 @@ export default function RinkRostersApp() {
   const [pickerFor, setPickerFor] = useState(null) // 'jerseyPrimary' | null
   const [editPlayerId, setEditPlayerId] = useState(null) // open the edit modal for this player
   const [actionMenu, setActionMenu] = useState(null) // { source, playerId, x, y } — tap on a rink chip
-  const [importErr, setImportErr] = useState('')
   const [teamsOpen, setTeamsOpen] = useState(false)
   const [teams, setTeams] = useState(loadTeams)
-  const fileInputRef = useRef(null)
 
   const { roster, lines, view, colors, format } = state
 
@@ -336,6 +354,10 @@ export default function RinkRostersApp() {
     })
     return { slots, filled, unitKind: 'PK' }
   }, [view, format, lines])
+
+  // Positions used for rendering + hit-testing. On mobile, chips are nudged off
+  // the rink lines/circles (see MOBILE_SLOT_NUDGE); desktop uses raw positions.
+  const dispSlots = useMemo(() => nudgeSlots(activeUnit.slots, vertical), [activeUnit, vertical])
 
   // ── Mutations ───────────────────────────────────────────────────────────
   function addPlayer(p) {
@@ -543,7 +565,7 @@ export default function RinkRostersApp() {
           y = ((pt.y - r.top) / r.height) * RINK.H
         }
         let best = null, bestD = Infinity
-        for (const s of activeUnit.slots) {
+        for (const s of dispSlots) {
           const dx = s.x - x, dy = s.y - y
           const d2 = dx*dx + dy*dy
           if (d2 < bestD) { bestD = d2; best = s }
@@ -570,24 +592,13 @@ export default function RinkRostersApp() {
     return false
   }
 
-  // ── JSON import/export ──────────────────────────────────────────────────
-  function exportJson() {
-    const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'rinkrosters-roster.json'
-    a.click()
-    URL.revokeObjectURL(url)
-  }
-  function importJsonText(text) {
-    try {
-      const parsed = JSON.parse(text)
-      setState(mergeStateShape(parsed))
-      setImportErr('')
-    } catch (e) {
-      setImportErr('Invalid JSON file.')
-    }
+  // ── Reset lineup ─────────────────────────────────────────────────────────
+  // Clears every on-ice placement (lines, pairs, PP/PK units, goalies) back to
+  // empty. The roster of players and colors are kept — only the arrangement
+  // resets, so a coach can re-build from a clean sheet after experimenting.
+  function resetLineup() {
+    if (!window.confirm('Reset the lineup? This clears all players off the rink. Your roster is kept.')) return
+    setState(s => ({ ...s, lines: emptyState().lines }))
   }
 
   // ── Named local saves ("My Teams") ──────────────────────────────────────
@@ -721,9 +732,8 @@ export default function RinkRostersApp() {
           onView={(patch) => setState(s => ({ ...s, view: { ...s.view, ...patch } }))}
           onFormat={(f) => setState(s => ({ ...s, format: f }))}
           onExportPng={exportPng}
-          onExportJson={exportJson}
-          onImportClick={() => fileInputRef.current?.click()}
           onOpenTeams={() => setTeamsOpen(true)}
+          onReset={resetLineup}
           onPickColor={setPickerFor}
           colors={colors}
         />
@@ -731,7 +741,7 @@ export default function RinkRostersApp() {
         <div style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', alignItems: 'stretch', justifyContent: 'center' }}>
           <Rink
             innerRef={rinkRef}
-            slots={activeUnit.slots}
+            slots={dispSlots}
             filled={activeUnit.filled}
             playerById={playerById}
             colors={colors}
@@ -753,15 +763,6 @@ export default function RinkRostersApp() {
             }}
           />
         </div>
-        <input
-          ref={fileInputRef} type="file" accept="application/json" style={{ display: 'none' }}
-          onChange={(e) => {
-            const f = e.target.files?.[0]
-            if (!f) return
-            f.text().then(importJsonText).finally(() => { e.target.value = '' })
-          }}
-        />
-        {importErr ? <div style={{ position: 'absolute', bottom: 12, left: 12, background: '#7f1d1d', color: '#fff', padding: '6px 10px', borderRadius: 6, fontSize: 12 }}>{importErr}</div> : null}
       </div>
 
       {/* Roster sidebar / drawer */}
@@ -881,7 +882,7 @@ function useScreen() {
 // ════════════════════════════════════════════════════════════════════════════
 // Header
 // ════════════════════════════════════════════════════════════════════════════
-function Header({ view, format, onView, onFormat, onExportPng, onExportJson, onImportClick, onOpenTeams, onPickColor, colors }) {
+function Header({ view, format, onView, onFormat, onExportPng, onOpenTeams, onReset, onPickColor, colors }) {
   const tabBtn = (label, mode) => (
     <button onClick={() => onView({ mode })}
       style={{
@@ -913,9 +914,8 @@ function Header({ view, format, onView, onFormat, onExportPng, onExportJson, onI
       <div style={{ flex: 1 }} />
       <ColorChip label="Jersey" value={colors.jerseyPrimary} onClick={() => onPickColor('jerseyPrimary')} />
       <button onClick={onOpenTeams} style={{ ...btn, color: '#4cc2ff', borderColor: '#1e3a8a' }}>Teams</button>
-      <button onClick={onExportPng} style={btn}>PNG</button>
-      <button onClick={onExportJson} style={btn}>Export</button>
-      <button onClick={onImportClick} style={btn}>Import</button>
+      <button onClick={onExportPng} style={btn}>Download Lineup</button>
+      <button onClick={onReset} style={{ ...btn, color: '#fca5a5', borderColor: '#7f1d1d' }}>Reset</button>
     </div>
   )
 }
