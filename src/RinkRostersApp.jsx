@@ -1314,9 +1314,10 @@ function Rink({ innerRef, groupRef, slots, filled, playerById, colors, hoverSlot
         )
       })}
 
-      {/* Empty slot labels (purely visual; presses are handled by the container). */}
+      {/* Empty slot labels (purely visual; presses are handled by the container).
+          Stripped from the PNG export — the canvas redraws placed players itself. */}
       {slots.map(s => filled[s.key] ? null : (
-        <g key={'lbl-' + s.key} transform={`translate(${s.x + M},${s.y + M})`}>
+        <g key={'lbl-' + s.key} data-export-strip transform={`translate(${s.x + M},${s.y + M})`}>
           <g data-spin transform={spin || undefined}>
             <circle cx="0" cy="0" r="5" fill="none" stroke="rgba(11,17,24,0.35)" strokeWidth="0.3" strokeDasharray="1 0.6" />
             <text x="0" y="1.4" textAnchor="middle" fontSize="3.2" fill="rgba(11,17,24,0.55)" style={{ fontFamily: 'system-ui, -apple-system, sans-serif', fontWeight: 700 }}>
@@ -1326,7 +1327,9 @@ function Rink({ innerRef, groupRef, slots, filled, playerById, colors, hoverSlot
         </g>
       ))}
 
-      {/* Player chips */}
+      {/* Player chips. Stripped from the PNG export (data-export-strip) because
+          exportPng redraws them on the canvas — keeping both double-printed the
+          names (and the SVG copy still carried the mobile position nudges). */}
       {slots.map(s => {
         const pid = filled[s.key]
         if (!pid) return null
@@ -1334,7 +1337,7 @@ function Rink({ innerRef, groupRef, slots, filled, playerById, colors, hoverSlot
         if (!p) return null
         const offPos = !isEligible(p, s) // soft position lock → warning ring
         return (
-          <g key={'chip-' + s.key} transform={`translate(${s.x + M},${s.y + M})`}>
+          <g key={'chip-' + s.key} data-export-strip transform={`translate(${s.x + M},${s.y + M})`}>
             <g data-spin transform={spin || undefined}>
               {offPos && (
                 <circle cx="0" cy="0" r="6.8" fill="none" stroke="#f59e0b" strokeWidth="0.6" strokeDasharray="1.2 0.8" />
