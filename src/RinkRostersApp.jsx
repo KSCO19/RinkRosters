@@ -53,22 +53,23 @@ const SLOTS = {
     { key: 'F1', label: 'F', x: 160, y: 28, pos: 'C' },
     { key: 'F2', label: 'F', x: 160, y: 57, pos: 'C' },
   ],
-  // Power Play (5 skaters, generic) -- 1-3-1 classic look
+  // Power Play (5 skaters, generic) -- 1-3-1 look, spread wide so the chips and
+  // their name plates don't collide (esp. on the squashed mobile rink).
   PP: [
     { key: 'G',  label: 'G',  x: 12,  y: 42.5, pos: 'G' },
-    { key: 'P1', label: 'PT', x: 130, y: 42.5, pos: 'SKATER' }, // QB / point
-    { key: 'P2', label: 'LW', x: 158, y: 22,   pos: 'SKATER' }, // L half-wall
-    { key: 'P3', label: 'BU', x: 165, y: 42.5, pos: 'SKATER' }, // bumper / slot
-    { key: 'P4', label: 'RW', x: 158, y: 63,   pos: 'SKATER' }, // R half-wall
-    { key: 'P5', label: 'NF', x: 180, y: 42.5, pos: 'SKATER' }, // net-front
+    { key: 'P1', label: 'PT', x: 95,  y: 42.5, pos: 'SKATER' }, // QB / point
+    { key: 'P2', label: 'LW', x: 140, y: 14,   pos: 'SKATER' }, // L half-wall
+    { key: 'P3', label: 'BU', x: 152, y: 42.5, pos: 'SKATER' }, // bumper / slot
+    { key: 'P4', label: 'RW', x: 140, y: 71,   pos: 'SKATER' }, // R half-wall
+    { key: 'P5', label: 'NF', x: 186, y: 42.5, pos: 'SKATER' }, // net-front
   ],
-  // Penalty Kill (4 skaters, generic) -- box in D-zone
+  // Penalty Kill (4 skaters, generic) -- box in D-zone, opened up for legibility.
   PK: [
     { key: 'G',  label: 'G',  x: 12, y: 42.5, pos: 'G' },
-    { key: 'K1', label: 'F',  x: 35, y: 28,   pos: 'SKATER' },
-    { key: 'K2', label: 'F',  x: 35, y: 57,   pos: 'SKATER' },
-    { key: 'K3', label: 'D',  x: 18, y: 28,   pos: 'SKATER' },
-    { key: 'K4', label: 'D',  x: 18, y: 57,   pos: 'SKATER' },
+    { key: 'K1', label: 'F',  x: 62, y: 20,   pos: 'SKATER' },
+    { key: 'K2', label: 'F',  x: 62, y: 65,   pos: 'SKATER' },
+    { key: 'K3', label: 'D',  x: 28, y: 28,   pos: 'SKATER' },
+    { key: 'K4', label: 'D',  x: 28, y: 57,   pos: 'SKATER' },
   ],
 }
 
