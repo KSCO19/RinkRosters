@@ -116,6 +116,11 @@ function emptyState() {
     view: { mode: 'ES', selectedLine: 0, selectedPair: 0, selectedUnit: 0 },
     colors: { ...DEFAULT_COLORS },
     format: '5v5',
+    // Free-placement overrides: posKey → { x, y } in landscape rink feet. When a
+    // token is dragged, its release spot is stored here and used for rendering +
+    // hit-testing instead of the default slot position. Role/line assignment is
+    // unchanged — this is purely where the chip sits on the ice.
+    positions: {},
   }
 }
 
@@ -173,6 +178,7 @@ function mergeStateShape(s) {
     view: { ...base.view, ...(s.view || {}) },
     colors: { ...base.colors, ...(s.colors || {}) },
     format: FORMAT_KEYS.includes(s.format) ? s.format : '5v5',
+    positions: (s.positions && typeof s.positions === 'object') ? s.positions : {},
   }
 }
 function normalizePlayer(p) {
@@ -352,7 +358,7 @@ export default function RinkRostersApp() {
   const [teamsOpen, setTeamsOpen] = useState(false)
   const [teams, setTeams] = useState(loadTeams)
 
-  const { roster, lines, view, colors, format } = state
+  const { roster, lines, view, colors, format, positions } = state
 
   // Mobile → portrait rink. Computed up here (not just at render) so the drag
   // hit-tester below can invert the rotation when mapping screen → rink coords.
@@ -404,9 +410,36 @@ export default function RinkRostersApp() {
     return { slots, filled, unitKind: 'PK' }
   }, [view, format, lines])
 
-  // Positions used for rendering + hit-testing. On mobile, chips are nudged off
-  // the rink lines/circles (see MOBILE_SLOT_NUDGE); desktop uses raw positions.
-  const dispSlots = useMemo(() => nudgeSlots(activeUnit.slots, vertical), [activeUnit, vertical])
+  // Stable key for a slot's free-placement override. Forwards track the selected
+  // line, D the selected pair, G is shared across views; PP/PK track their unit.
+  // (So repositioning L1 doesn't disturb L2, etc.)
+  const posKey = useCallback((slotKey) => {
+    if (view.mode === 'ES') {
+      if (slotKey === 'G') return 'G'
+      if (slotKey === 'LD' || slotKey === 'RD' || slotKey === 'D') return `ESD_${format}_${view.selectedPair}_${slotKey}`
+      return `ESF_${format}_${view.selectedLine}_${slotKey}`
+    }
+    if (view.mode === 'PP') return `PP_${view.selectedUnit}_${slotKey}`
+    return `PK_${view.selectedUnit}_${slotKey}`
+  }, [view, format])
+
+  // Positions used for rendering + hit-testing: start from the slot's default
+  // spot (nudged off the rink lines on mobile), then apply any free-placement
+  // override the coach has dragged a token to.
+  const dispSlots = useMemo(() => {
+    const nudged = nudgeSlots(activeUnit.slots, vertical)
+    return nudged.map(s => {
+      const cp = positions[posKey(s.key)]
+      return cp ? { ...s, x: cp.x, y: cp.y } : s
+    })
+  }, [activeUnit, vertical, positions, posKey])
+
+  // Store where a token was dropped (landscape feet), clamped just inside the boards.
+  function setSlotPos(slotKey, x, y) {
+    const cx = Math.max(3, Math.min(RINK.W - 3, x))
+    const cy = Math.max(3, Math.min(RINK.H - 3, y))
+    setState(s => ({ ...s, positions: { ...s.positions, [posKey(slotKey)]: { x: cx, y: cy } } }))
+  }
 
   // ── Mutations ───────────────────────────────────────────────────────────
   function addPlayer(p) {
@@ -463,10 +496,15 @@ export default function RinkRostersApp() {
   // immediately). Eligibility defaults to the slot's natural position.
   function createAndPlace(target, slot, name) {
     const player = normalizePlayer({ id: newId(), name, eligibility: defaultEligForSlot(slot), handedness: 'R' })
+    // A freshly created token starts at the slot's default spot — drop any stale
+    // free-placement override left behind by a previous occupant of this slot.
+    const cleared = { ...state.positions }
+    if (target.slotKey) delete cleared[posKey(target.slotKey)]
     setState(s => ({
       ...s,
       roster: s.roster.concat([player]),
       lines: placeInLines(s.lines, target, player.id),
+      positions: cleared,
     }))
   }
 
@@ -557,9 +595,11 @@ export default function RinkRostersApp() {
     const dx = Math.abs(pt.x - d.startX), dy = Math.abs(pt.y - d.startY)
     if (!d.moved && (dx > TAP_SLOP || dy > TAP_SLOP)) d.moved = true
     if (d.moved && d.allowMove && d.playerId) {
-      // Real drag of a real player: show the ghost + live slot highlighting.
       setDragGhost({ playerId: d.playerId, x: pt.x, y: pt.y })
-      setHoverSlot(detectHover(pt))
+      // Bench drags snap into a slot, so show slot highlights. Rink-token drags
+      // are free placement (no snapping) — only surface the bench-removal cue.
+      const h = detectHover(pt)
+      setHoverSlot(d.source.kind === 'BENCH' ? h : (h === 'BENCH' ? h : null))
     }
     if (DEBUG) setDbg(s => s ? { ...s, phase: 'move', moves: d.moves, moved: d.moved } : s)
   }
@@ -594,15 +634,13 @@ export default function RinkRostersApp() {
       return
     }
 
-    // Rink slot, Move mode: drag relocates the token (to any slot, assigned or
-    // not), or drop on the bench to remove it. A plain tap does nothing here.
+    // Rink slot, Move mode: free placement — the token stays exactly where the
+    // thumb lifts (its role/line stays the same). Dropping over the roster
+    // drawer removes it from the ice. A plain tap does nothing here.
     if (!d.moved || !d.playerId) return
     if (hover === 'BENCH') { clearSlot(d.source); return }
-    if (hover && hover.kind === 'RINK_SLOT') {
-      const target = rinkSlotToTarget(hover.slotKey)
-      if (!target) return
-      if (assignToSlot(target, d.playerId) && !sameSlot(d.source, target)) clearSlot(d.source)
-    }
+    const f = screenToFeet(pt)
+    if (f) setSlotPos(d.source.slotKey, f.fx, f.fy)
   }
   // Map a screen pixel to rink feet coordinates. We take the transform off the
   // *root* <svg> (getScreenCTM there is well-defined and letterbox/viewBox-correct
@@ -679,7 +717,7 @@ export default function RinkRostersApp() {
   // resets, so a coach can re-build from a clean sheet after experimenting.
   function resetLineup() {
     if (!window.confirm('Reset the lineup? This clears all players off the rink. Your roster is kept.')) return
-    setState(s => ({ ...s, lines: emptyState().lines }))
+    setState(s => ({ ...s, lines: emptyState().lines, positions: {} }))
   }
 
   // ── Named local saves ("My Teams") ──────────────────────────────────────
@@ -774,13 +812,17 @@ export default function RinkRostersApp() {
       URL.revokeObjectURL(url)
 
       // Player chips overlaid programmatically (more reliable than SVG text).
+      // Export is always landscape, so apply any free-placement override (stored
+      // in landscape feet) but skip the mobile-only nudges.
       const sx = PW / RINK.W, sy = PH / RINK.H
       for (const s of activeUnit.slots) {
         const pid = activeUnit.filled[s.key]
         const p = pid ? playerById(pid) : null
         if (!p) continue
-        const cx = PAD + s.x * sx
-        const cy = PAD + HDR + s.y * sy
+        const cp = positions[posKey(s.key)]
+        const fx = cp ? cp.x : s.x, fy = cp ? cp.y : s.y
+        const cx = PAD + fx * sx
+        const cy = PAD + HDR + fy * sy
         drawJerseyCanvas(ctx, cx, cy, 11 * SCALE, p, colors)
       }
 
@@ -947,7 +989,9 @@ export default function RinkRostersApp() {
             onCommit={(name) => {
               const trimmed = name.trim()
               if (isNew) {
-                if (trimmed) createAndPlace(inlineEdit.source, slot, trimmed)
+                // Name is optional — create the token even when blank so it can
+                // be placed/moved now and named later (a blank placeholder chip).
+                createAndPlace(inlineEdit.source, slot, trimmed)
               } else {
                 updatePlayer(inlineEdit.playerId, { name: trimmed })
               }
