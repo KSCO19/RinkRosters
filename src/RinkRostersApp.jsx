@@ -351,6 +351,7 @@ export default function RinkRostersApp() {
   // Edit (default) → tap a slot to name/rename a player; Move → drag a token to
   // any slot. Explicit modes so tap and drag never fight on a touch screen.
   const [moveMode, setMoveMode] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
   // Opt-in drag diagnostics (load with ?debug=1) — a small on-screen HUD that
   // reports the live gesture state so touch issues can be pinpointed on-device.
   const [dbg, setDbg] = useState(null)
@@ -890,7 +891,7 @@ export default function RinkRostersApp() {
             }}
           />
         </div>
-        <ModeToggle moveMode={moveMode} onSet={setMoveMode} />
+        <ModeToggle moveMode={moveMode} onSet={setMoveMode} onHelp={() => setHelpOpen(true)} />
       </div>
 
       {/* Roster sidebar / drawer */}
@@ -955,6 +956,9 @@ export default function RinkRostersApp() {
           onClose={() => setPickerFor(null)}
         />
       )}
+
+      {/* Ice controls help */}
+      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
 
       {/* My Teams (named local saves) */}
       {teamsOpen && (
@@ -1147,9 +1151,10 @@ function LineSelector({ view, lines, onView }) {
 // ════════════════════════════════════════════════════════════════════════════
 // Rink SVG
 // ════════════════════════════════════════════════════════════════════════════
-// Segmented Edit/Move control in its own strip below the line selector — both
-// options always visible, the highlighted half showing the active mode.
-function ModeToggle({ moveMode, onSet }) {
+// Segmented Edit/Move control in its own strip below the rink — both options
+// always visible, the highlighted half showing the active mode. A separate "?"
+// button (detached from the segment) opens the ice-controls guide.
+function ModeToggle({ moveMode, onSet, onHelp }) {
   const seg = (active, accent) => ({
     display: 'flex', alignItems: 'center', gap: 6,
     padding: '8px 16px', borderRadius: 999, cursor: 'pointer',
@@ -1159,10 +1164,47 @@ function ModeToggle({ moveMode, onSet }) {
     transition: 'background 0.12s, color 0.12s',
   })
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', padding: '6px 8px', borderTop: '1px solid #1f2937' }}>
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, padding: '6px 8px', borderTop: '1px solid #1f2937' }}>
       <div style={{ display: 'flex', gap: 4, padding: 4, borderRadius: 999, background: '#0b1118', border: '1px solid #334155' }}>
         <button className="rr-mob-chip" onClick={() => onSet(false)} style={seg(!moveMode, '#38bdf8')}>✎ Edit names</button>
         <button className="rr-mob-chip" onClick={() => onSet(true)} style={seg(moveMode, '#fbbf24')}>✥ Move players</button>
+      </div>
+      <button className="rr-mob-chip" onClick={onHelp} aria-label="Ice controls help" title="Ice controls help"
+        style={{
+          flexShrink: 0, width: 32, height: 32, borderRadius: '50%', cursor: 'pointer',
+          background: 'transparent', color: '#94a3b8', border: '1px solid #334155',
+          fontSize: 15, fontWeight: 800, lineHeight: 1,
+        }}>?</button>
+    </div>
+  )
+}
+
+// Quick reference for the on-ice controls, opened by the "?" beside the toggle.
+function HelpModal({ onClose }) {
+  const Row = ({ icon, title, body }) => (
+    <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+      <div style={{ flexShrink: 0, width: 24, textAlign: 'center', fontSize: 15 }}>{icon}</div>
+      <div>
+        <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: 13 }}>{title}</div>
+        <div style={{ color: '#94a3b8', fontSize: 12, lineHeight: 1.45 }}>{body}</div>
+      </div>
+    </div>
+  )
+  return (
+    <div onMouseDown={onClose} onTouchStart={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 }}>
+      <div onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}
+        style={{ background: '#0e1722', border: '1px solid #1f2937', borderRadius: 12, padding: 18, width: '100%', maxWidth: 380, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: '#cbd5e1' }}>Ice controls</div>
+        <Row icon="✎" title="Edit names" body="With Edit names on, tap any spot on the ice to name a player there. Blank is fine — it drops a placeholder you can name later. Tap a player to rename; “Details” sets number, shot, and position." />
+        <Row icon="✥" title="Move players" body="With Move players on, drag any spot — a player or an empty position marker — anywhere on the ice. It stays exactly where you lift your finger." />
+        <Row icon="🗑" title="Remove" body="In Move players mode, drag a player down onto the Roster drawer to take them off the ice (they stay in your roster)." />
+        <Row icon="🏒" title="Lines & special teams" body="The Even Strength / Power Play / Penalty Kill tabs each have their own layout. Pick the line, pair, or unit in the row above the rink." />
+        <Row icon="⬇" title="Download & Reset" body="“Download Lineup” saves the current view as an image. “Reset” clears all players and custom positions back to the default spots (your roster is kept)." />
+        <button onClick={onClose}
+          style={{ alignSelf: 'flex-end', padding: '8px 16px', background: '#0ea5e9', color: '#0b1118', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>
+          Got it
+        </button>
       </div>
     </div>
   )
