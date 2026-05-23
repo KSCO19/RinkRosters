@@ -2,8 +2,8 @@
 // Strategy: network-first for navigations (so deploys are picked up), and
 // stale-while-revalidate for same-origin static assets (Vite hashes filenames,
 // so cached assets never go stale incorrectly). Bump CACHE to invalidate.
-const CACHE = 'rinkrosters-v1'
-const SHELL = ['/', '/index.html', '/favicon.svg', '/icon-192.png', '/icon-512.png', '/site.webmanifest']
+const CACHE = 'rinkrosters-v2'
+const SHELL = ['/', '/index.html', '/favicon.svg', '/icon-192.png', '/icon-512.png', '/site.webmanifest', '/fonts/oswald-latin.woff2']
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()))

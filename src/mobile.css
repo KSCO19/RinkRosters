@@ -1,3 +1,17 @@
+/* Self-hosted display font (Oswald, latin subset, variable weight 200–700).
+   Self-hosted (not the Google Fonts CDN) on purpose: the service worker returns
+   early on cross-origin requests, so a CDN font would never be cached and the
+   PWA would lose its headers offline. The woff2 lives in public/fonts/ and is
+   precached via the SW SHELL array. font-display:swap → no invisible text on
+   first paint (brief FOUT instead). */
+@font-face {
+  font-family: 'Oswald';
+  font-style: normal;
+  font-weight: 200 700;
+  font-display: swap;
+  src: url('/fonts/oswald-latin.woff2') format('woff2');
+}
+
 /* Mobile-only safe-area and Visual Viewport rules for RinkRosters.
    Imported from src/main.jsx so Vite bundles it on every build.
 
@@ -32,4 +46,47 @@
   .rr-mob-header {
     padding-top: max(env(safe-area-inset-top, 0px), 8px);
   }
+}
+
+/* ── Micro-interactions ──────────────────────────────────────────────────────
+   All opacity-only and pointer-events-safe. The chip animations live on SVG
+   <g>/<circle> elements that are visual-only (the rink SVG has
+   pointer-events:none; presses go through a separate HTML hit-surface), so they
+   never affect the getScreenCTM drag mapping. Everything here is suppressed
+   under prefers-reduced-motion. */
+
+/* Token settles in when a slot goes empty→filled (placement / Auto-fill). */
+.rr-chip-in {
+  animation: rrChipIn 200ms ease-out both;
+}
+@keyframes rrChipIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Quick cyan pulse over a freshly-landed token, then gone. */
+.rr-chip-flash {
+  opacity: 0;
+  animation: rrChipFlash 480ms ease-out 1;
+}
+@keyframes rrChipFlash {
+  0%   { opacity: 0.9; }
+  100% { opacity: 0; }
+}
+
+/* Press feedback on the Edit/Move segmented control (HTML buttons, not the
+   hit-surface — transform here is safe). */
+.rr-press {
+  transition: transform 90ms ease;
+}
+.rr-press:active {
+  transform: scale(0.95);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rr-chip-in,
+  .rr-chip-flash,
+  .rr-press { animation: none; transition: none; }
+  .rr-chip-flash { opacity: 0; }
+  .rr-press:active { transform: none; }
 }

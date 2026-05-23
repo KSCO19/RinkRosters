@@ -87,6 +87,37 @@ const TEAMS_KEY = 'rinkrosters.teams.v1'
 // UI entry point — the autosave working copy and any saved snapshots are kept.
 const ENABLE_MY_TEAMS = false
 
+// Typography. DISPLAY_FONT (Oswald, self-hosted via mobile.css @font-face) is a
+// condensed athletic face used only for chrome — wordmark, view tabs, selector
+// labels, modal titles. Player names, numbers and the SVG/canvas chip text stay
+// on BODY_FONT (system-ui) for legibility and PNG-export parity (the canvas
+// redraw hard-codes system-ui — these must not diverge).
+const DISPLAY_FONT = "'Oswald', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+const BODY_FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+
+// Goalie accent — a gold rim marking goalie-eligible players across every render
+// path (rink, roster chip, depth chart). Deliberately distinct from the amber
+// Move-mode ring (#fbbf24) and the off-position warning ring (#f59e0b) so the
+// three never read as the same cue.
+const GOALIE_GOLD = '#f5c542'
+
+// Frosted-glass surface for modal/popover panels (the "frosted ice" look). The
+// translucent solid bg already reads fine where backdrop-filter is unsupported,
+// so no feature-detection is needed. Kept to transient overlays only — never the
+// always-on rink — to bound blur cost on low-end mobile.
+const GLASS_PANEL = {
+  background: 'rgba(14,23,34,0.72)',
+  backdropFilter: 'blur(14px)',
+  WebkitBackdropFilter: 'blur(14px)',
+  border: '1px solid rgba(255,255,255,0.08)',
+  boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+}
+
+// Faint skate-shaving texture (very low-opacity curved strokes) tiled behind the
+// rink as a CSS background. Inline data-URI so it ships in the bundle with no
+// extra request and caches with the app shell.
+const ICE_TEXTURE = `url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='150'%20height='150'%3E%3Cg%20fill='none'%20stroke='%23ffffff'%20stroke-opacity='0.04'%20stroke-width='1.3'%20stroke-linecap='round'%3E%3Cpath%20d='M12%2046%20q22%20-13%2044%200'/%3E%3Cpath%20d='M70%20104%20q26%20-15%2050%200'/%3E%3Cpath%20d='M-8%20116%20q22%20-13%2044%200'/%3E%3Cpath%20d='M38%2014%20q20%20-11%2040%200'/%3E%3Cpath%20d='M96%2060%20q22%20-13%2044%200'/%3E%3C/g%3E%3C/svg%3E")`
+
 // Fixed ice tint — no longer user-configurable (jersey-only color model).
 const ICE_FILL = '#eaf2fb'
 // SVG margin (ft) around the rink inside the viewBox; shared by render + hit-test.
@@ -965,6 +996,12 @@ export default function RinkRostersApp() {
           style={{
             flex: 1, minHeight: 0, position: 'relative', display: 'flex', alignItems: 'stretch', justifyContent: 'center',
             touchAction: 'none', cursor: moveMode ? 'grab' : 'pointer',
+            // Faint skate-shaving texture behind the rink. A container background
+            // (not a child layer) so it can't intercept pointer events — the
+            // getScreenCTM hit-testing stays exact — and, living outside rinkRef,
+            // it never appears in the PNG export.
+            backgroundImage: ICE_TEXTURE,
+            backgroundSize: '150px 150px',
             // Amber inset ring while Move mode is active — an ambient cue that
             // drag-to-reposition is live (mirrors the toggle's amber half).
             boxShadow: moveMode ? 'inset 0 0 0 3px #fbbf24' : 'none',
@@ -1174,7 +1211,7 @@ function Header({ view, format, onView, onFormat, onExportPng, onOpenTeams, onRe
         background: view.mode === mode ? '#1e3a8a' : 'transparent',
         color: view.mode === mode ? '#fff' : '#94a3b8',
         border: '1px solid ' + (view.mode === mode ? '#3b82f6' : '#1f2937'),
-        borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 600, letterSpacing: 0.5,
+        borderRadius: 6, cursor: 'pointer', fontFamily: DISPLAY_FONT, fontSize: 14, fontWeight: 600, letterSpacing: 0.6,
       }}>{label}</button>
   )
   const btn = {
@@ -1183,7 +1220,7 @@ function Header({ view, format, onView, onFormat, onExportPng, onOpenTeams, onRe
   }
   return (
     <div className="rr-mob-header" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid #1f2937', flexWrap: 'wrap' }}>
-      <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: 0.5, marginRight: 8 }}>
+      <div style={{ fontFamily: DISPLAY_FONT, fontWeight: 700, fontSize: 18, letterSpacing: 1, marginRight: 8 }}>
         <span style={{ color: '#4cc2ff' }}>RINK</span>ROSTERS
       </div>
       {tabBtn('Even Str', 'ES')}
@@ -1241,7 +1278,7 @@ function LineSelector({ view, lines, onView }) {
     </div>
   )
   return (
-    <div style={{ display: 'flex', gap: 16, padding: '8px 12px', borderBottom: '1px solid #1f2937', flexWrap: 'wrap', fontSize: 12, color: '#94a3b8', alignItems: 'center' }}>
+    <div style={{ display: 'flex', gap: 16, padding: '8px 12px', borderBottom: '1px solid #1f2937', flexWrap: 'wrap', fontFamily: DISPLAY_FONT, fontSize: 13, color: '#94a3b8', alignItems: 'center' }}>
       {view.mode === 'ES' && (
         <>
           <span style={{ letterSpacing: 0.6, opacity: 0.7 }}>LINE</span>
@@ -1284,8 +1321,8 @@ function ModeToggle({ moveMode, onSet, onHelp }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, padding: '6px 8px', borderTop: '1px solid #1f2937' }}>
       <div style={{ display: 'flex', gap: 4, padding: 4, borderRadius: 999, background: '#0b1118', border: '1px solid #334155' }}>
-        <button className="rr-mob-chip" onClick={() => onSet(false)} style={seg(!moveMode, '#38bdf8')}>✎ Edit names</button>
-        <button className="rr-mob-chip" onClick={() => onSet(true)} style={seg(moveMode, '#fbbf24')}>✥ Move players</button>
+        <button className="rr-mob-chip rr-press" onClick={() => onSet(false)} style={seg(!moveMode, '#38bdf8')}>✎ Edit names</button>
+        <button className="rr-mob-chip rr-press" onClick={() => onSet(true)} style={seg(moveMode, '#fbbf24')}>✥ Move players</button>
       </div>
       <button className="rr-mob-chip" onClick={onHelp} aria-label="Ice controls help" title="Ice controls help"
         style={{
@@ -1312,8 +1349,8 @@ function HelpModal({ onClose }) {
     <div onMouseDown={onClose} onTouchStart={onClose}
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 }}>
       <div onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}
-        style={{ background: '#0e1722', border: '1px solid #1f2937', borderRadius: 12, padding: 18, width: '100%', maxWidth: 380, display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: '#cbd5e1' }}>Ice controls</div>
+        style={{ ...GLASS_PANEL, borderRadius: 12, padding: 18, width: '100%', maxWidth: 380, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ fontFamily: DISPLAY_FONT, fontSize: 16, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: '#cbd5e1' }}>Ice controls</div>
         <Row icon="✎" title="Edit names" body="With Edit names on, tap an empty spot to name a new player there (blank is fine — names later). Tap a placed player to open a picker and choose who plays that spot — pick someone already on the ice and they swap places. “+ New”, “Edit”, and “Remove” are in the picker too." />
         <Row icon="✥" title="Move players" body="With Move players on, drag any spot — a player or an empty position marker — anywhere on the ice. It stays exactly where you lift your finger." />
         <Row icon="🗑" title="Remove" body="In Move players mode, drag a player down onto the Roster drawer to take them off the ice (they stay in your roster)." />
@@ -1411,10 +1448,16 @@ function Rink({ innerRef, groupRef, slots, filled, playerById, colors, hoverSlot
         const offPos = !isEligible(p, s) // soft position lock → warning ring
         return (
           <g key={'chip-' + s.key} data-export-strip transform={`translate(${s.x + M},${s.y + M})`}>
-            <g data-spin transform={spin || undefined}>
+            {/* rr-chip-in plays once when this slot goes empty→filled (the <g>
+                mounts), so placing a player or Auto-fill makes the token settle
+                in. Opacity-only (no transform) — the position translate above and
+                the getScreenCTM hit-testing are untouched. */}
+            <g data-spin className="rr-chip-in" transform={spin || undefined}>
               {offPos && (
                 <circle cx="0" cy="0" r="6.8" fill="none" stroke="#f59e0b" strokeWidth="0.6" strokeDasharray="1.2 0.8" />
               )}
+              {/* Settle flash — a quick cyan pulse on landing, fades to nothing. */}
+              <circle className="rr-chip-flash" cx="0" cy="0" r="6.2" fill="none" stroke="#9bdcff" strokeWidth="0.5" pointerEvents="none" />
               <JerseySvg player={p} colors={colors} size={11} />
             </g>
           </g>
@@ -1549,8 +1592,15 @@ function JerseySvg({ player, colors, size }) {
   const num = String(player.number || '').slice(0, 2)
   const ink = readableOn(colors.jerseyPrimary) // trim + number, auto-contrasted
   const fontSize = num.length >= 2 ? s * 0.38 : s * 0.5
+  const isGoalie = (player.eligibility || []).includes('G')
   return (
     <g>
+      {/* Gold rim hugging the jersey marks goalies. Drawn behind the jersey so
+          only the rim outside it shows; inside the off-position warning ring
+          (r 6.8 at size 11) so a goalie placed out of slot shows both, distinct. */}
+      {isGoalie && (
+        <circle cx="0" cy="0" r={r * 1.14} fill="none" stroke={GOALIE_GOLD} strokeWidth={s * 0.08} />
+      )}
       <circle cx="0" cy="0" r={r} fill={colors.jerseyPrimary} stroke={ink} strokeWidth={s * 0.06} />
       <text x="0" y={fontSize * 0.36} textAnchor="middle" fill={ink} fontSize={fontSize} style={{ fontFamily: 'system-ui, -apple-system, sans-serif', fontWeight: 800, letterSpacing: 0 }}>
         {num}
@@ -1578,6 +1628,7 @@ function JerseySvg({ player, colors, size }) {
 function JerseyChip({ player, colors, size = 44 }) {
   const fontSize = String(player.number || '').length >= 2 ? size * 0.38 : size * 0.5
   const ink = readableOn(colors.jerseyPrimary)
+  const isGoalie = (player.eligibility || []).includes('G')
   return (
     <div style={{
       width: size, height: size, borderRadius: '50%',
@@ -1586,7 +1637,10 @@ function JerseyChip({ player, colors, size = 44 }) {
       color: ink,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       fontSize, fontWeight: 800, position: 'relative',
-      boxShadow: '0 2px 4px rgba(0,0,0,0.25)',
+      // Gold ring marks goalies in roster lists + the picker (mirrors the rink rim).
+      boxShadow: isGoalie
+        ? `0 0 0 ${Math.max(2, size * 0.07)}px ${GOALIE_GOLD}, 0 2px 4px rgba(0,0,0,0.25)`
+        : '0 2px 4px rgba(0,0,0,0.25)',
     }}>
       {player.number || ''}
       <div style={{
@@ -1610,6 +1664,16 @@ function drawJerseyCanvas(ctx, cx, cy, r, player, colors) {
   ctx.lineWidth = Math.max(1, r * 0.12)
   ctx.strokeStyle = ink
   ctx.stroke()
+
+  // Goalie gold rim — must mirror JerseySvg's ring (r*1.14, width s*0.08 = r*0.16)
+  // or the exported PNG won't match the on-screen rink.
+  if ((player.eligibility || []).includes('G')) {
+    ctx.beginPath()
+    ctx.arc(cx, cy, r * 1.14, 0, Math.PI * 2)
+    ctx.strokeStyle = GOALIE_GOLD
+    ctx.lineWidth = Math.max(1, r * 0.16)
+    ctx.stroke()
+  }
 
   const num = String(player.number || '').slice(0, 2)
   ctx.textAlign = 'center'
@@ -1769,12 +1833,14 @@ function LineChart({ lines, view, playerById, colors }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>{children}</div>
     </div>
   )
-  const row = (label, ids, isActive) => (
+  const row = (label, ids, isActive, goalie) => (
     <div key={label} style={{
       display: 'grid', gridTemplateColumns: '36px 1fr', gap: 8,
       padding: '4px 8px', fontSize: 12, color: '#cbd5e1',
-      background: isActive ? '#0e2030' : 'transparent',
-      borderLeft: isActive ? '2px solid #4cc2ff' : '2px solid transparent',
+      // Goalie rows read in gold (gold tint for the highlighted starter); line/pair
+      // rows keep the cyan active highlight. Makes netminder coverage scannable.
+      background: isActive ? (goalie ? 'rgba(245,197,66,0.12)' : '#0e2030') : 'transparent',
+      borderLeft: goalie ? `2px solid ${GOALIE_GOLD}` : (isActive ? '2px solid #4cc2ff' : '2px solid transparent'),
     }}>
       <div style={{ fontWeight: 700, color: '#64748b' }}>{label}</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0 8px' }}>
@@ -1797,9 +1863,9 @@ function LineChart({ lines, view, playerById, colors }) {
         {lines.pk.map((u, i) => row(`PK${i + 1}`, u.slots, view.mode === 'PK' && view.selectedUnit === i))}
       </Section>
       <Section title="Goalies">
-        {row('G1', [lines.goalies.starter], true)}
-        {row('G2', [lines.goalies.backup], false)}
-        {row('EBUG', [lines.goalies.emergency], false)}
+        {row('G1', [lines.goalies.starter], true, true)}
+        {row('G2', [lines.goalies.backup], false, true)}
+        {row('EBUG', [lines.goalies.emergency], false, true)}
       </Section>
     </div>
   )
@@ -1819,12 +1885,11 @@ function ColorPopover({ target, value, onPick, onClose }) {
       }}>
       <div onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}
         style={{
-          background: '#0e1722', border: '1px solid #1f2937', borderRadius: 10,
+          ...GLASS_PANEL, borderRadius: 10,
           padding: 16, minWidth: 280, maxWidth: 360,
-          boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
         }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: 0.5, color: '#cbd5e1', textTransform: 'uppercase' }}>{label}</div>
+          <div style={{ fontFamily: DISPLAY_FONT, fontSize: 15, fontWeight: 700, letterSpacing: 0.6, color: '#cbd5e1', textTransform: 'uppercase' }}>{label}</div>
           <div style={{ width: 22, height: 22, borderRadius: 4, background: value, border: '1px solid rgba(255,255,255,0.18)' }} />
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 6 }}>
@@ -1870,7 +1935,7 @@ function TeamsModal({ teams, rosterCount, onSaveNew, onOverwrite, onLoad, onRena
     <div onMouseDown={onClose} onTouchStart={onClose}
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 }}>
       <div onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}
-        style={{ background: '#0e1722', border: '1px solid #1f2937', borderRadius: 12, padding: 18, width: '100%', maxWidth: 440, maxHeight: '82vh', display: 'flex', flexDirection: 'column' }}>
+        style={{ ...GLASS_PANEL, borderRadius: 12, padding: 18, width: '100%', maxWidth: 440, maxHeight: '82vh', display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: '#cbd5e1' }}>My Teams</div>
           <button onClick={onClose} style={{ ...btn, padding: '4px 8px' }}>✕</button>
@@ -1997,8 +2062,8 @@ function InlineNameEditor({ initialName, slotLabel, isNew, onCommit, onRemove, o
       <div onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}
         style={{
           position: 'fixed', ...pos, width: W,
-          background: '#0e1722', border: '1px solid #1f2937', borderRadius: 10,
-          padding: 10, boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
+          ...GLASS_PANEL, borderRadius: 10,
+          padding: 10,
           display: 'flex', flexDirection: 'column', gap: 8,
         }}>
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6, color: '#64748b', textTransform: 'uppercase' }}>
@@ -2044,8 +2109,8 @@ function PlayerPicker({ slotLabel, slotDef, currentId, roster, colors, onPick, o
     <div onMouseDown={onClose} onTouchStart={onClose}
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 }}>
       <div onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}
-        style={{ background: '#0e1722', border: '1px solid #1f2937', borderRadius: 12, padding: 16, width: '100%', maxWidth: 380, maxHeight: '80vh', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: '#cbd5e1' }}>
+        style={{ ...GLASS_PANEL, borderRadius: 12, padding: 16, width: '100%', maxWidth: 380, maxHeight: '80vh', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ fontFamily: DISPLAY_FONT, fontSize: 16, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: '#cbd5e1' }}>
           Who plays {slotLabel}?
         </div>
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -2113,8 +2178,8 @@ function PlayerModal({ player, onSave, onDelete, onClose }) {
         padding: 16,
       }}>
       <div onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}
-        style={{ background: '#0e1722', border: '1px solid #1f2937', borderRadius: 12, padding: 18, width: '100%', maxWidth: 380 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.5, marginBottom: 12, textTransform: 'uppercase', color: '#cbd5e1' }}>
+        style={{ ...GLASS_PANEL, borderRadius: 12, padding: 18, width: '100%', maxWidth: 380 }}>
+        <div style={{ fontFamily: DISPLAY_FONT, fontSize: 16, fontWeight: 700, letterSpacing: 0.6, marginBottom: 12, textTransform: 'uppercase', color: '#cbd5e1' }}>
           {player ? 'Edit Player' : 'New Player'}
         </div>
         <div style={{ display: 'grid', gap: 10 }}>
