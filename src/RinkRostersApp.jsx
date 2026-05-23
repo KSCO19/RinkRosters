@@ -1242,7 +1242,7 @@ function Header({ view, format, onView, onFormat, onExportPng, onOpenTeams, onAu
         <button onClick={onOpenTeams} style={{ ...btn, color: '#4cc2ff', borderColor: '#1e3a8a' }}>Teams</button>
       )}
       <div style={{ flex: 1 }} />
-      <button onClick={onExportPng} style={btn}>Download Lineup</button>
+      <button onClick={onExportPng} style={{ ...btn, background: '#4cc2ff', color: '#0b1118', border: '1px solid #4cc2ff', fontWeight: 700 }}>Download Lineup</button>
     </div>
   )
 }
