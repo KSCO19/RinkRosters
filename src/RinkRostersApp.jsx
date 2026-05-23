@@ -360,6 +360,8 @@ export default function RinkRostersApp() {
   // any slot. Explicit modes so tap and drag never fight on a touch screen.
   const [moveMode, setMoveMode] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
+  // Tap a placed token in Edit mode → roster picker to swap who plays that spot.
+  const [pickFor, setPickFor] = useState(null) // { source, slotKey, playerId }
   // Opt-in drag diagnostics (load with ?debug=1) — a small on-screen HUD that
   // reports the live gesture state so touch issues can be pinpointed on-device.
   const [dbg, setDbg] = useState(null)
@@ -532,6 +534,24 @@ export default function RinkRostersApp() {
     })
   }
 
+  // Put `newPid` into the tapped slot. If that player already holds another spot
+  // in the current view, the two trade places (true swap); otherwise the player
+  // who was in the tapped slot is displaced (becomes unplaced in this view).
+  function assignToSlotWithSwap(tappedSlotKey, newPid) {
+    const tappedTarget = rinkSlotToTarget(tappedSlotKey)
+    if (!tappedTarget) return
+    const displaced = activeUnit.filled[tappedSlotKey] || null
+    const otherKey = Object.keys(activeUnit.filled).find(k => activeUnit.filled[k] === newPid && k !== tappedSlotKey)
+    setState(s => {
+      let lines = placeInLines(s.lines, tappedTarget, newPid)
+      if (otherKey) {
+        const otherTarget = rinkSlotToTarget(otherKey)
+        if (otherTarget) lines = placeInLines(lines, otherTarget, displaced)
+      }
+      return { ...s, lines }
+    })
+  }
+
   // Maps a rink slot to its drop target descriptor for the *currently* active line.
   function rinkSlotToTarget(slotKey) {
     if (view.mode === 'ES') {
@@ -635,10 +655,12 @@ export default function RinkRostersApp() {
       return
     }
 
-    // Rink slot, Edit mode: pressing opens the name editor (rename, or on an
-    // empty slot type a name to create + place). No drag action in this mode.
+    // Rink slot, Edit mode (no drag action here):
+    //  • empty slot → quick name editor (type a name to create + place);
+    //  • filled token → roster picker to swap who plays that spot.
     if (!d.allowMove) {
-      setInlineEdit({ source: d.source, slotKey: d.source.slotKey, playerId: d.playerId, x: pt.x, y: pt.y })
+      if (d.playerId) setPickFor({ source: d.source, slotKey: d.source.slotKey, playerId: d.playerId })
+      else setInlineEdit({ source: d.source, slotKey: d.source.slotKey, playerId: d.playerId, x: pt.x, y: pt.y })
       return
     }
 
@@ -731,39 +753,69 @@ export default function RinkRostersApp() {
     setState(s => ({ ...s, lines: emptyState().lines, positions: {} }))
   }
 
-  // ── Auto-fill PP / PK from the roster ─────────────────────────────────────
-  // Seeds both PP units (5 skaters, a D at the point + forwards) and both PK
-  // units (2 forwards up top, 2 D in the box) from the roster, in roster order.
-  // No skill data exists, so this is a sensible starting layout the coach then
-  // tweaks — distinct players within each special-teams group; PP and PK draw
-  // independently (a two-way player can appear on both, as in real hockey).
-  function autoFillSpecialTeams() {
-    const skaters = roster.filter(p => (p.eligibility || []).some(e => e !== 'G'))
-    if (skaters.length === 0) { window.alert('Add some skaters to your roster first, then auto-fill.'); return }
-    const hasExisting = lines.pp.some(u => u.slots.some(Boolean)) || lines.pk.some(u => u.slots.some(Boolean))
-    if (hasExisting && !window.confirm('Auto-fill will replace your current Power Play and Penalty Kill units. Continue?')) return
+  // ── Auto-fill the whole lineup from the roster ────────────────────────────
+  // Fills every EMPTY spot — 4 forward lines, 3 D pairs, the starting goalie,
+  // and both PP + PK units — leaving anything already placed untouched. Players
+  // are distinct within each group (a coach can't be on two ES lines at once),
+  // but ES / PP / PK draw independently, so a two-way player can appear on all
+  // three (as in real hockey). No skill data exists, so it goes in roster order
+  // by eligible position, then backfills leftover spots with any spare skater —
+  // a sensible starting point the coach then tweaks (tap a token to swap).
+  function autoFillLineup() {
+    const hasPos = (p, pos) => (p.eligibility || []).includes(pos)
+    const isF = p => hasPos(p, 'C') || hasPos(p, 'LW') || hasPos(p, 'RW')
+    const isD = p => hasPos(p, 'LD') || hasPos(p, 'RD')
+    // Skater = anyone who isn't a pure goalie (unknown/no-position players count
+    // as skaters so "fill everything" can still seat them via backfill).
+    const skaters = roster.filter(p => { const e = p.eligibility || []; return e.length === 0 || e.some(x => x !== 'G') })
+    const goalies = roster.filter(p => hasPos(p, 'G'))
+    if (!skaters.length && !goalies.length) { window.alert('Add players to your roster first, then auto-fill.'); return }
 
-    const isF = p => (p.eligibility || []).some(e => e === 'C' || e === 'LW' || e === 'RW')
-    const isD = p => (p.eligibility || []).some(e => e === 'LD' || e === 'RD')
-    const buildUnits = (count, pattern) => {
-      const forwards = skaters.filter(isF)
-      const defense = skaters.filter(isD)
-      const used = new Set()
-      const take = pool => { for (const p of pool) if (!used.has(p.id)) { used.add(p.id); return p.id } return null }
-      const units = []
-      for (let u = 0; u < count; u++) {
-        const slots = pattern.map(role => take(role === 'D' ? defense : forwards))
-        // Backfill any slot still empty (e.g. ran out of a position) with any skater.
-        for (let i = 0; i < slots.length; i++) if (!slots[i]) slots[i] = take(skaters)
-        units.push({ slots })
+    setState(s => {
+      const lines = {
+        forwards: s.lines.forwards.map(f => ({ ...f })),
+        defense:  s.lines.defense.map(d => ({ ...d })),
+        pp:       s.lines.pp.map(u => ({ slots: u.slots.slice() })),
+        pk:       s.lines.pk.map(u => ({ slots: u.slots.slice() })),
+        goalies:  { ...s.lines.goalies },
       }
-      return units
-    }
-    // PP slots: point, L wall, bumper, R wall, net-front. PK slots: F, F, D, D.
-    const pp = buildUnits(2, ['D', 'F', 'F', 'F', 'F'])
-    const pk = buildUnits(2, ['F', 'F', 'D', 'D'])
-    // Jump to the Power Play view so the fill is immediately visible.
-    setState(s => ({ ...s, lines: { ...s.lines, pp, pk }, view: { ...s.view, mode: 'PP', selectedUnit: 0 } }))
+
+      // Even strength — distinct across all forward + D slots.
+      const usedES = new Set()
+      lines.forwards.forEach(f => ['LW', 'C', 'RW'].forEach(r => f[r] && usedES.add(f[r])))
+      lines.defense.forEach(d => ['LD', 'RD'].forEach(r => d[r] && usedES.add(d[r])))
+      const takeES = pred => { for (const p of skaters) if (!usedES.has(p.id) && pred(p)) { usedES.add(p.id); return p.id } return null }
+      lines.forwards.forEach(f => {
+        if (!f.LW) f.LW = takeES(p => hasPos(p, 'LW'))
+        if (!f.C)  f.C  = takeES(p => hasPos(p, 'C'))
+        if (!f.RW) f.RW = takeES(p => hasPos(p, 'RW'))
+      })
+      lines.defense.forEach(d => {
+        if (!d.LD) d.LD = takeES(p => hasPos(p, 'LD'))
+        if (!d.RD) d.RD = takeES(p => hasPos(p, 'RD'))
+      })
+      // Backfill leftover ES spots with any spare skater (soft eligibility).
+      lines.forwards.forEach(f => ['LW', 'C', 'RW'].forEach(r => { if (!f[r]) f[r] = takeES(() => true) }))
+      lines.defense.forEach(d => ['LD', 'RD'].forEach(r => { if (!d[r]) d[r] = takeES(() => true) }))
+
+      // Goalie — starter only.
+      if (!lines.goalies.starter && goalies.length) lines.goalies.starter = goalies[0].id
+
+      // Special teams — fill empty slots only, distinct within each group.
+      const fillUnits = (units, pattern) => {
+        const used = new Set()
+        units.forEach(u => u.slots.forEach(id => id && used.add(id)))
+        const take = pred => { for (const p of skaters) if (!used.has(p.id) && pred(p)) { used.add(p.id); return p.id } return null }
+        units.forEach(u => {
+          u.slots.forEach((id, i) => { if (!id) u.slots[i] = take(pattern[i] === 'D' ? isD : isF) })
+          u.slots.forEach((id, i) => { if (!u.slots[i]) u.slots[i] = take(() => true) })
+        })
+      }
+      fillUnits(lines.pp, ['D', 'F', 'F', 'F', 'F'])
+      fillUnits(lines.pk, ['F', 'F', 'D', 'D'])
+
+      return { ...s, lines }
+    })
   }
 
   // ── Named local saves ("My Teams") ──────────────────────────────────────
@@ -903,7 +955,7 @@ export default function RinkRostersApp() {
           onExportPng={exportPng}
           onOpenTeams={() => setTeamsOpen(true)}
           onReset={resetLineup}
-          onAutoFill={autoFillSpecialTeams}
+          onAutoFill={autoFillLineup}
           onPickColor={setPickerFor}
           colors={colors}
         />
@@ -1059,6 +1111,25 @@ export default function RinkRostersApp() {
           />
         )
       })()}
+
+      {/* Tap-to-replace picker (Edit mode, filled token) */}
+      {pickFor && (() => {
+        const slot = activeUnit.slots.find(s => s.key === pickFor.slotKey)
+        return (
+          <PlayerPicker
+            slotLabel={slot?.label || ''}
+            slotDef={slot}
+            currentId={pickFor.playerId}
+            roster={roster}
+            colors={colors}
+            onPick={(id) => { assignToSlotWithSwap(pickFor.slotKey, id); setPickFor(null) }}
+            onNew={() => { setInlineEdit({ source: pickFor.source, slotKey: pickFor.slotKey, playerId: null }); setPickFor(null) }}
+            onEditCurrent={() => { setEditPlayerId(pickFor.playerId); setPickFor(null) }}
+            onRemove={() => { clearSlot(pickFor.source); setPickFor(null) }}
+            onClose={() => setPickFor(null)}
+          />
+        )
+      })()}
     </div>
   )
 }
@@ -1129,7 +1200,7 @@ function Header({ view, format, onView, onFormat, onExportPng, onOpenTeams, onRe
       {ENABLE_MY_TEAMS && (
         <button onClick={onOpenTeams} style={{ ...btn, color: '#4cc2ff', borderColor: '#1e3a8a' }}>Teams</button>
       )}
-      <button onClick={onAutoFill} style={{ ...btn, color: '#86efac', borderColor: '#14532d' }} title="Fill Power Play & Penalty Kill units from your roster">Auto PP/PK</button>
+      <button onClick={onAutoFill} style={{ ...btn, color: '#86efac', borderColor: '#14532d' }} title="Fill all lines, pairs, PP, PK and starting goalie from your roster (empty spots only)">Auto-fill</button>
       <button onClick={onExportPng} style={btn}>Download Lineup</button>
       <button onClick={onReset} style={{ ...btn, color: '#fca5a5', borderColor: '#7f1d1d' }}>Reset</button>
     </div>
@@ -1243,11 +1314,11 @@ function HelpModal({ onClose }) {
       <div onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}
         style={{ background: '#0e1722', border: '1px solid #1f2937', borderRadius: 12, padding: 18, width: '100%', maxWidth: 380, display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: '#cbd5e1' }}>Ice controls</div>
-        <Row icon="✎" title="Edit names" body="With Edit names on, tap any spot on the ice to name a player there. Blank is fine — it drops a placeholder you can name later. Tap a player to rename; “Details” sets number, shot, and position." />
+        <Row icon="✎" title="Edit names" body="With Edit names on, tap an empty spot to name a new player there (blank is fine — names later). Tap a placed player to open a picker and choose who plays that spot — pick someone already on the ice and they swap places. “+ New”, “Edit”, and “Remove” are in the picker too." />
         <Row icon="✥" title="Move players" body="With Move players on, drag any spot — a player or an empty position marker — anywhere on the ice. It stays exactly where you lift your finger." />
         <Row icon="🗑" title="Remove" body="In Move players mode, drag a player down onto the Roster drawer to take them off the ice (they stay in your roster)." />
         <Row icon="🏒" title="Lines & special teams" body="The Even Strength / Power Play / Penalty Kill tabs each have their own layout. Pick the line, pair, or unit in the row above the rink." />
-        <Row icon="⚡" title="Auto PP/PK" body="“Auto PP/PK” in the header fills both Power Play and Penalty Kill units from your roster (a D at the point + forwards on the PP, forwards and D on the PK) as a starting point you can tweak." />
+        <Row icon="⚡" title="Auto-fill" body="“Auto-fill” in the header seeds your whole lineup from the roster — all forward lines, D pairs, the starting goalie, and both PP & PK units — filling only empty spots (it won't disturb players you've already placed)." />
         <Row icon="⬇" title="Download & Reset" body="“Download Lineup” saves the current view as an image. “Reset” clears all players and custom positions back to the default spots (your roster is kept)." />
         <button onClick={onClose}
           style={{ alignSelf: 'flex-end', padding: '8px 16px', background: '#0ea5e9', color: '#0b1118', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>
@@ -1947,6 +2018,70 @@ function InlineNameEditor({ initialName, slotLabel, isNew, onCommit, onRemove, o
           </button>
           {onDetails && <button onClick={onDetails} style={btn}>Details</button>}
           {onRemove && <button onClick={onRemove} style={{ ...btn, color: '#fca5a5', borderColor: '#7f1d1d' }}>Remove</button>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Player picker — tap a placed token (Edit mode) to choose who plays that spot.
+// Eligible players are listed first; picking someone already on the rink swaps
+// them in (handled by the caller). Also offers add-new / edit / remove.
+// ════════════════════════════════════════════════════════════════════════════
+function PlayerPicker({ slotLabel, slotDef, currentId, roster, colors, onPick, onNew, onEditCurrent, onRemove, onClose }) {
+  const sorted = [...roster].sort((a, b) => {
+    const ea = slotDef && isEligible(a, slotDef) ? 0 : 1
+    const eb = slotDef && isEligible(b, slotDef) ? 0 : 1
+    return ea - eb
+  })
+  const btn = {
+    flex: 1, padding: '9px 10px', fontSize: 12, fontWeight: 700,
+    background: '#0b1118', color: '#94a3b8', border: '1px solid #1f2937',
+    borderRadius: 6, cursor: 'pointer',
+  }
+  return (
+    <div onMouseDown={onClose} onTouchStart={onClose}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 }}>
+      <div onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}
+        style={{ background: '#0e1722', border: '1px solid #1f2937', borderRadius: 12, padding: 16, width: '100%', maxWidth: 380, maxHeight: '80vh', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: '#cbd5e1' }}>
+          Who plays {slotLabel}?
+        </div>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {sorted.length === 0 && (
+            <div style={{ color: '#64748b', fontSize: 12, padding: '8px 4px' }}>No players in your roster yet — add one below.</div>
+          )}
+          {sorted.map(p => {
+            const eligible = slotDef && isEligible(p, slotDef)
+            const isCurrent = p.id === currentId
+            return (
+              <button key={p.id} onClick={() => onPick(p.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px', textAlign: 'left',
+                  background: isCurrent ? '#10233a' : '#0e1722',
+                  border: '1px solid ' + (isCurrent ? '#1e3a8a' : '#1f2937'),
+                  borderRadius: 8, cursor: 'pointer',
+                }}>
+                <JerseyChip player={p} colors={colors} size={32} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {p.name || <span style={{ color: '#64748b' }}>Unnamed</span>}
+                    {isCurrent && <span style={{ color: '#4cc2ff', fontSize: 10, fontWeight: 700, marginLeft: 6 }}>HERE NOW</span>}
+                  </div>
+                  <div style={{ fontSize: 11, color: eligible ? '#86efac' : '#94a3b8' }}>
+                    #{p.number || '—'} · {p.eligibility.length ? p.eligibility.join('/') : 'No positions'}{eligible ? ' · fits' : ''}
+                  </div>
+                </div>
+              </button>
+            )
+          })}
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={onNew} style={{ ...btn, color: '#4cc2ff', borderColor: '#1e3a8a' }}>+ New</button>
+          {currentId && <button onClick={onEditCurrent} style={btn}>Edit</button>}
+          {currentId && <button onClick={onRemove} style={{ ...btn, color: '#fca5a5', borderColor: '#7f1d1d' }}>Remove</button>}
+          <button onClick={onClose} style={btn}>Cancel</button>
         </div>
       </div>
     </div>
