@@ -989,6 +989,7 @@ export default function RinkRostersApp() {
           onAutoFill={autoFillLineup}
           onPickColor={setPickerFor}
           colors={colors}
+          mobile={mobile}
         />
         <LineSelector view={view} lines={lines} onView={(patch) => setState(s => ({ ...s, view: { ...s.view, ...patch } }))} />
         <div
@@ -1203,27 +1204,31 @@ function useScreen() {
 // ════════════════════════════════════════════════════════════════════════════
 // Header
 // ════════════════════════════════════════════════════════════════════════════
-function Header({ view, format, onView, onFormat, onExportPng, onOpenTeams, onReset, onAutoFill, onPickColor, colors }) {
+function Header({ view, format, onView, onFormat, onExportPng, onOpenTeams, onReset, onAutoFill, onPickColor, colors, mobile }) {
+  // Tighter type + padding on mobile so the wrapped header collapses to fewer
+  // rows (it otherwise spilled to three on a ~390px phone, made worse by the
+  // longer "Even Strength" label).
   const tabBtn = (label, mode) => (
     <button onClick={() => onView({ mode })}
       style={{
-        padding: '8px 14px',
+        padding: mobile ? '6px 9px' : '8px 14px',
         background: view.mode === mode ? '#1e3a8a' : 'transparent',
         color: view.mode === mode ? '#fff' : '#94a3b8',
         border: '1px solid ' + (view.mode === mode ? '#3b82f6' : '#1f2937'),
-        borderRadius: 6, cursor: 'pointer', fontFamily: DISPLAY_FONT, fontSize: 14, fontWeight: 600, letterSpacing: 0.6,
+        borderRadius: 6, cursor: 'pointer', fontFamily: DISPLAY_FONT,
+        fontSize: mobile ? 12 : 14, fontWeight: 600, letterSpacing: mobile ? 0.4 : 0.6,
       }}>{label}</button>
   )
   const btn = {
-    padding: '6px 10px', background: '#111b27', color: '#cbd5e1', border: '1px solid #1f2937',
-    borderRadius: 6, cursor: 'pointer', fontSize: 12,
+    padding: mobile ? '5px 8px' : '6px 10px', background: '#111b27', color: '#cbd5e1', border: '1px solid #1f2937',
+    borderRadius: 6, cursor: 'pointer', fontSize: mobile ? 11 : 12,
   }
   return (
-    <div className="rr-mob-header" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid #1f2937', flexWrap: 'wrap' }}>
-      <div style={{ fontFamily: DISPLAY_FONT, fontWeight: 700, fontSize: 18, letterSpacing: 1, marginRight: 8 }}>
+    <div className="rr-mob-header" style={{ display: 'flex', alignItems: 'center', gap: mobile ? 6 : 8, padding: mobile ? '8px 10px' : '10px 12px', borderBottom: '1px solid #1f2937', flexWrap: 'wrap' }}>
+      <div style={{ fontFamily: DISPLAY_FONT, fontWeight: 700, fontSize: mobile ? 16 : 18, letterSpacing: mobile ? 0.5 : 1, marginRight: mobile ? 4 : 8 }}>
         <span style={{ color: '#4cc2ff' }}>RINK</span>ROSTERS
       </div>
-      {tabBtn('Even Str', 'ES')}
+      {tabBtn('Even Strength', 'ES')}
       {tabBtn('Power Play', 'PP')}
       {tabBtn('Penalty Kill', 'PK')}
       {view.mode === 'ES' && (
