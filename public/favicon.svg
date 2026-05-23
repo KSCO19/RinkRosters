@@ -1,28 +1,72 @@
 <svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
   <defs>
+    <!-- App background, matches the dark UI so rasterized square icons read as
+         full-bleed and the SVG's rounded corners blend on a dark page. -->
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#13243a"/>
       <stop offset="1" stop-color="#0b1118"/>
     </linearGradient>
+    <!-- Puck side wall: vertical shading so the cylinder reads as 3D. -->
+    <linearGradient id="wall" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0"   stop-color="#1b2937"/>
+      <stop offset="0.5" stop-color="#0c1219"/>
+      <stop offset="1"   stop-color="#05080c"/>
+    </linearGradient>
+    <!-- Top face: ice-blue sheen in the upper-left falling to near-black. -->
+    <radialGradient id="face" cx="0.36" cy="0.30" r="0.9">
+      <stop offset="0"    stop-color="#2f6286"/>
+      <stop offset="0.18" stop-color="#244861"/>
+      <stop offset="0.55" stop-color="#0e1a26"/>
+      <stop offset="1"    stop-color="#070d13"/>
+    </radialGradient>
   </defs>
-  <!-- App background (rounded for SVG slots; rasterized icons sit on a matching
-       dark page so the corners read as a seamless full-bleed square). -->
+
+  <!-- Background -->
   <rect width="512" height="512" rx="112" fill="#0b1118"/>
   <rect width="512" height="512" rx="112" fill="url(#bg)"/>
 
-  <!-- Vertical mini-rink mark (mirrors the app's portrait mobile rink) -->
-  <g>
-    <rect x="132" y="70" width="248" height="372" rx="78" fill="#0e1a28" stroke="#4cc2ff" stroke-width="11"/>
-    <!-- blue lines -->
-    <line x1="132" y1="196" x2="380" y2="196" stroke="#3b82f6" stroke-width="6" opacity="0.85"/>
-    <line x1="132" y1="316" x2="380" y2="316" stroke="#3b82f6" stroke-width="6" opacity="0.85"/>
-    <!-- center red line -->
-    <line x1="132" y1="256" x2="380" y2="256" stroke="#ff4d4d" stroke-width="9"/>
-    <!-- center faceoff -->
-    <circle cx="256" cy="256" r="38" fill="none" stroke="#4cc2ff" stroke-width="7"/>
-    <circle cx="256" cy="256" r="6" fill="#4cc2ff"/>
-    <!-- two roster chips, attacking zone (top) -->
-    <circle cx="206" cy="132" r="20" fill="#4cc2ff"/>
-    <circle cx="306" cy="132" r="20" fill="#e2e8f0"/>
+  <!-- ── 3D hockey puck ──────────────────────────────────────────────────
+       Built as a cylinder: an elliptical top face over a front side wall.
+       Top ellipse  centred (256,215), rx150 ry58.
+       Bottom front arc at y=305 gives the rounded base of the silhouette.
+       Scaled up about centre so the mark stays legible down to a 16px
+       favicon while keeping a little breathing room at icon sizes. -->
+  <g transform="translate(256 258) scale(1.24) translate(-256 -258)">
+
+  <!-- Side wall (front face of the cylinder) -->
+  <path d="M 106 215
+           A 150 58 0 0 0 406 215
+           L 406 305
+           A 150 58 0 0 1 106 305 Z"
+        fill="url(#wall)"/>
+
+  <!-- Red accent band wrapping the front of the puck -->
+  <path d="M 106 250
+           A 150 58 0 0 0 406 250
+           L 406 271
+           A 150 58 0 0 1 106 271 Z"
+        fill="#ff4d4d"/>
+  <!-- subtle shading on the band so it follows the cylinder -->
+  <path d="M 106 250
+           A 150 58 0 0 0 406 250
+           L 406 271
+           A 150 58 0 0 1 106 271 Z"
+        fill="url(#wall)" opacity="0.18"/>
+
+  <!-- Bright ice-blue rim along the front edge of the top face (the catch
+       of light that sells the 3D form). -->
+  <path d="M 106 215 A 150 58 0 0 0 406 215"
+        fill="none" stroke="#4cc2ff" stroke-width="7" opacity="0.65"/>
+
+  <!-- Top face -->
+  <ellipse cx="256" cy="215" rx="150" ry="58" fill="url(#face)"/>
+  <!-- Top-face rim: full ice-blue outline, the highlighted 3D edge. -->
+  <ellipse cx="256" cy="215" rx="150" ry="58" fill="none" stroke="#4cc2ff" stroke-width="6"/>
+  <!-- Brighter specular arc on the upper-left of the rim. -->
+  <path d="M 130 196 A 150 58 0 0 1 256 159"
+        fill="none" stroke="#bfe9ff" stroke-width="7" stroke-linecap="round" opacity="0.95"/>
+
+  <!-- Soft specular sheen pooled on the top face, upper-left. -->
+  <ellipse cx="212" cy="200" rx="58" ry="20" fill="#bfe9ff" opacity="0.16"/>
   </g>
 </svg>
