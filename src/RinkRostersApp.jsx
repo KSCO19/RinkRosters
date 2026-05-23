@@ -890,10 +890,12 @@ export default function RinkRostersApp() {
     clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
     // Strip all interactive chrome (drop-zone outlines, hover glows) before serializing.
     clone.querySelectorAll('[data-export-strip]').forEach(el => el.remove())
-    // Always export landscape, even when the live rink is portrait on mobile:
+    // Render the rink image LANDSCAPE in all cases (clean, round faceoff circles):
     // neutralize the rotation wrapper + per-chip counter-spins and reset the
     // viewBox to the landscape frame. Chips are redrawn programmatically below,
-    // so the (now-unrotated) SVG chips underneath don't matter.
+    // so the (now-unrotated) SVG chips underneath don't matter. For mobile the
+    // composited canvas then rotates this image -90° into portrait (matching the
+    // on-screen orientation) — see `portrait` in img.onload.
     const M = RINK_M
     const VB_W = RINK.W + M * 2
     const VB_H = RINK.H + M * 2
@@ -915,8 +917,15 @@ export default function RinkRostersApp() {
       const PAD = 24 * SCALE
       const HDR = 56 * SCALE
       const FTR = 36 * SCALE
-      const CW = PW + PAD * 2
-      const CH = HDR + PH + FTR + PAD * 2
+      // Mobile exports portrait to match the on-screen vertical rink; desktop
+      // stays landscape. The rink image is always rendered landscape (above), so
+      // portrait just rotates it -90° at composite time and places the (upright)
+      // chips at the rotated coordinates. Header/footer stay upright either way.
+      const portrait = vertical
+      const rinkW = portrait ? PH : PW
+      const rinkH = portrait ? PW : PH
+      const CW = rinkW + PAD * 2
+      const CH = HDR + rinkH + FTR + PAD * 2
 
       const canvas = document.createElement('canvas')
       canvas.width = CW; canvas.height = CH
@@ -936,13 +945,23 @@ export default function RinkRostersApp() {
       ctx.font = `${10 * SCALE}px system-ui, -apple-system, sans-serif`
       ctx.fillText(viewLabel(view, format), CW / 2, PAD + 40 * SCALE)
 
-      // Rink
-      ctx.drawImage(img, PAD, PAD + HDR, PW, PH)
+      // Rink — rotate the landscape image -90° for portrait, else draw it flat.
+      const rinkX = PAD, rinkY = PAD + HDR
+      if (portrait) {
+        ctx.save()
+        ctx.translate(rinkX, rinkY + PW)
+        ctx.rotate(-Math.PI / 2)
+        ctx.drawImage(img, 0, 0, PW, PH)
+        ctx.restore()
+      } else {
+        ctx.drawImage(img, rinkX, rinkY, PW, PH)
+      }
       URL.revokeObjectURL(url)
 
       // Player chips overlaid programmatically (more reliable than SVG text).
-      // Export is always landscape, so apply any free-placement override (stored
-      // in landscape feet) but skip the mobile-only nudges.
+      // Apply any free-placement override (stored in landscape feet); skip the
+      // mobile-only nudges. Portrait maps the same landscape feet through the
+      // -90° rotation so chips line up with the rotated rink image.
       const sx = PW / RINK.W, sy = PH / RINK.H
       for (const s of activeUnit.slots) {
         const pid = activeUnit.filled[s.key]
@@ -950,8 +969,8 @@ export default function RinkRostersApp() {
         if (!p) continue
         const cp = positions[posKey(s.key)]
         const fx = cp ? cp.x : s.x, fy = cp ? cp.y : s.y
-        const cx = PAD + fx * sx
-        const cy = PAD + HDR + fy * sy
+        const cx = portrait ? rinkX + fy * sy : rinkX + fx * sx
+        const cy = portrait ? rinkY + PW - fx * sx : rinkY + fy * sy
         drawJerseyCanvas(ctx, cx, cy, 11 * SCALE, p, colors)
       }
 
@@ -1913,13 +1932,6 @@ function ColorPopover({ target, value, onPick, onClose }) {
                 borderRadius: 6, cursor: 'pointer',
               }} />
           ))}
-        </div>
-        <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 11, color: '#94a3b8' }}>Custom</span>
-          <input type="color" value={value} onChange={(e) => onPick(e.target.value)}
-            style={{ width: 36, height: 28, border: 'none', background: 'transparent', cursor: 'pointer' }} />
-          <input type="text" value={value} onChange={(e) => onPick(e.target.value)}
-            style={{ flex: 1, padding: '4px 6px', background: '#0b1118', color: '#cbd5e1', border: '1px solid #1f2937', borderRadius: 4, fontSize: 12 }} />
         </div>
       </div>
     </div>
