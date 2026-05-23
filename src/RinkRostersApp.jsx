@@ -985,7 +985,6 @@ export default function RinkRostersApp() {
           onFormat={(f) => setState(s => ({ ...s, format: f }))}
           onExportPng={exportPng}
           onOpenTeams={() => setTeamsOpen(true)}
-          onReset={resetLineup}
           onAutoFill={autoFillLineup}
           onPickColor={setPickerFor}
           colors={colors}
@@ -1025,7 +1024,7 @@ export default function RinkRostersApp() {
             }}
           />
         </div>
-        <ModeToggle moveMode={moveMode} onSet={setMoveMode} onHelp={() => setHelpOpen(true)} />
+        <ModeToggle moveMode={moveMode} onSet={setMoveMode} onHelp={() => setHelpOpen(true)} onReset={resetLineup} mobile={mobile} />
       </div>
 
       {/* Roster sidebar / drawer */}
@@ -1204,7 +1203,7 @@ function useScreen() {
 // ════════════════════════════════════════════════════════════════════════════
 // Header
 // ════════════════════════════════════════════════════════════════════════════
-function Header({ view, format, onView, onFormat, onExportPng, onOpenTeams, onReset, onAutoFill, onPickColor, colors, mobile }) {
+function Header({ view, format, onView, onFormat, onExportPng, onOpenTeams, onAutoFill, onPickColor, colors, mobile }) {
   // Tighter type + padding on mobile so the wrapped header collapses to fewer
   // rows (it otherwise spilled to three on a ~390px phone, made worse by the
   // longer "Even Strength" label).
@@ -1244,7 +1243,6 @@ function Header({ view, format, onView, onFormat, onExportPng, onOpenTeams, onRe
       )}
       <button onClick={onAutoFill} style={{ ...btn, color: '#86efac', borderColor: '#14532d' }} title="Fill all lines, pairs, PP, PK and starting goalie from your roster (empty spots only)">Auto-fill</button>
       <button onClick={onExportPng} style={btn}>Download Lineup</button>
-      <button onClick={onReset} style={{ ...btn, color: '#fca5a5', borderColor: '#7f1d1d' }}>Reset</button>
     </div>
   )
 }
@@ -1314,17 +1312,21 @@ function LineSelector({ view, lines, onView }) {
 // Segmented Edit/Move control in its own strip below the rink — both options
 // always visible, the highlighted half showing the active mode. A separate "?"
 // button (detached from the segment) opens the ice-controls guide.
-function ModeToggle({ moveMode, onSet, onHelp }) {
+function ModeToggle({ moveMode, onSet, onHelp, onReset, mobile }) {
+  // Tighter padding/type on mobile so the segmented control + ? + Reset all sit
+  // on one row (adding Reset here otherwise squeezed the toggle labels onto two
+  // lines). whiteSpace:nowrap keeps each label intact; the row can wrap as a whole
+  // on very narrow screens rather than breaking a label mid-word.
   const seg = (active, accent) => ({
-    display: 'flex', alignItems: 'center', gap: 6,
-    padding: '8px 16px', borderRadius: 999, cursor: 'pointer',
-    fontSize: 13, fontWeight: 800, letterSpacing: 0.3, border: 'none',
+    display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap',
+    padding: mobile ? '7px 11px' : '8px 16px', borderRadius: 999, cursor: 'pointer',
+    fontSize: mobile ? 12 : 13, fontWeight: 800, letterSpacing: 0.3, border: 'none',
     background: active ? accent : 'transparent',
     color: active ? '#0b1118' : '#94a3b8',
     transition: 'background 0.12s, color 0.12s',
   })
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, padding: '6px 8px', borderTop: '1px solid #1f2937' }}>
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap', gap: mobile ? 6 : 10, padding: '6px 8px', borderTop: '1px solid #1f2937' }}>
       <div style={{ display: 'flex', gap: 4, padding: 4, borderRadius: 999, background: '#0b1118', border: '1px solid #334155' }}>
         <button className="rr-mob-chip rr-press" onClick={() => onSet(false)} style={seg(!moveMode, '#38bdf8')}>✎ Edit names</button>
         <button className="rr-mob-chip rr-press" onClick={() => onSet(true)} style={seg(moveMode, '#fbbf24')}>✥ Move players</button>
@@ -1335,6 +1337,12 @@ function ModeToggle({ moveMode, onSet, onHelp }) {
           background: 'transparent', color: '#94a3b8', border: '1px solid #334155',
           fontSize: 15, fontWeight: 800, lineHeight: 1,
         }}>?</button>
+      <button className="rr-mob-chip rr-press" onClick={onReset} title="Clear all players and custom positions (your roster is kept)"
+        style={{
+          flexShrink: 0, padding: mobile ? '7px 11px' : '7px 12px', borderRadius: 999, cursor: 'pointer',
+          background: 'transparent', color: '#fca5a5', border: '1px solid #7f1d1d',
+          fontSize: 12, fontWeight: 700, letterSpacing: 0.3,
+        }}>Reset</button>
     </div>
   )
 }
