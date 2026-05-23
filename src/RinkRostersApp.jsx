@@ -1230,18 +1230,18 @@ function Header({ view, format, onView, onFormat, onExportPng, onOpenTeams, onAu
       {tabBtn('Even Strength', 'ES')}
       {tabBtn('Power Play', 'PP')}
       {tabBtn('Penalty Kill', 'PK')}
+      <button onClick={onAutoFill} style={{ ...btn, color: '#86efac', borderColor: '#14532d' }} title="Fill all lines, pairs, PP, PK and starting goalie from your roster (empty spots only)">Auto-fill</button>
       {view.mode === 'ES' && (
         <select value={format} onChange={(e) => onFormat(e.target.value)}
           style={{ ...btn, background: '#0b1118', padding: '7px 10px' }}>
           {FORMAT_KEYS.map(f => <option key={f} value={f}>{f}</option>)}
         </select>
       )}
-      <div style={{ flex: 1 }} />
       <ColorChip label="Jersey" value={colors.jerseyPrimary} onClick={() => onPickColor('jerseyPrimary')} />
       {ENABLE_MY_TEAMS && (
         <button onClick={onOpenTeams} style={{ ...btn, color: '#4cc2ff', borderColor: '#1e3a8a' }}>Teams</button>
       )}
-      <button onClick={onAutoFill} style={{ ...btn, color: '#86efac', borderColor: '#14532d' }} title="Fill all lines, pairs, PP, PK and starting goalie from your roster (empty spots only)">Auto-fill</button>
+      <div style={{ flex: 1 }} />
       <button onClick={onExportPng} style={btn}>Download Lineup</button>
     </div>
   )
