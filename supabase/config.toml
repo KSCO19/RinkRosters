@@ -1,0 +1,9 @@
+project_id = "rodnmfojqanbwvlhlzaw"
+
+[auth]
+site_url = "https://rinkrosters.com"
+additional_redirect_urls = [
+  "https://rinkrosters.com/**",
+  "http://localhost:4173/**",
+  "http://localhost:5173/**"
+]
