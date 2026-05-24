@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { supabase, supabaseConfigured } from './supabaseClient'
 
 // ─── UA flags (mobile safe-area + Visual Viewport tuning) ──────────────────
 // Used by the body-class useEffect below so mobile.css can layer per-platform
@@ -80,12 +81,16 @@ const POSITION_FAMILY = { C: 'F', LW: 'F', RW: 'F', LD: 'D', RD: 'D', G: 'G' }
 
 const STORAGE_KEY = 'rinkrosters.v1'
 const TEAMS_KEY = 'rinkrosters.teams.v1'
+// Set once we've offered to migrate any pre-existing local snapshots to the cloud,
+// so the import banner doesn't keep reappearing.
+const TEAMS_IMPORTED_KEY = 'rinkrosters.teams.imported.v1'
 
-// "My Teams" (named local snapshots) is hidden for now: it's slated to move to
-// account sign-in + Supabase cloud sync for real cross-device security. Flip to
-// true to re-expose the existing local-storage version. Hiding only removes the
-// UI entry point — the autosave working copy and any saved snapshots are kept.
-const ENABLE_MY_TEAMS = false
+// "My Teams" is now cloud-backed: it requires account sign-in (magic link) and
+// stores saved lineups in Supabase with per-user row-level security. The entry
+// point only appears when the Supabase client is configured (VITE_SUPABASE_*);
+// without it the app still runs fully as a local line-builder. The always-on
+// autosave working copy (STORAGE_KEY) stays local and is unaffected either way.
+const ENABLE_MY_TEAMS = supabaseConfigured
 
 // Typography. DISPLAY_FONT (Oswald, self-hosted via mobile.css @font-face) is a
 // condensed athletic face used only for chrome — wordmark, view tabs, selector
@@ -398,7 +403,12 @@ export default function RinkRostersApp() {
   const [dbg, setDbg] = useState(null)
   const DEBUG = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug')
   const [teamsOpen, setTeamsOpen] = useState(false)
-  const [teams, setTeams] = useState(loadTeams)
+  const [teams, setTeams] = useState([])            // cloud rows mapped to { id, name, savedAt, state }
+  const [session, setSession] = useState(null)      // Supabase auth session; null = signed out
+  const [authBusy, setAuthBusy] = useState(false)   // magic-link request in flight
+  const [authMsg, setAuthMsg] = useState('')        // status under the sign-in form
+  const [teamsBusy, setTeamsBusy] = useState(false) // a cloud CRUD op in flight
+  const [localTeamsCount, setLocalTeamsCount] = useState(0) // pre-cloud local snapshots, offered for import
 
   const { roster, lines, view, colors, format, positions } = state
 
@@ -849,21 +859,40 @@ export default function RinkRostersApp() {
     })
   }
 
-  // ── Named local saves ("My Teams") ──────────────────────────────────────
-  function commitTeams(next) { setTeams(next); persistTeams(next) }
-  function saveCurrentAsTeam(name) {
-    const team = {
-      id: newId(),
-      name: name.trim() || `Team ${teams.length + 1}`,
-      savedAt: Date.now(),
-      state: JSON.parse(JSON.stringify(stateRef.current)),
-    }
-    commitTeams([team, ...teams])
+  // ── Cloud saves ("My Teams") — Supabase, owner-scoped via RLS ─────────────
+  // A row's updated_at drives both ordering and the "saved" label; map it to the
+  // { id, name, savedAt, state } shape the TeamsModal already renders.
+  const mapRow = (r) => ({ id: r.id, name: r.name, savedAt: new Date(r.updated_at).getTime(), state: r.state })
+  function snapshot() { return JSON.parse(JSON.stringify(stateRef.current)) }
+
+  async function fetchTeams() {
+    if (!supabase || !sessionRef.current) { setTeams([]); return }
+    setTeamsBusy(true)
+    const { data, error } = await supabase.from('teams').select('*').order('updated_at', { ascending: false })
+    setTeamsBusy(false)
+    if (error) { console.error('fetchTeams:', error.message); return }
+    setTeams((data || []).map(mapRow))
   }
-  function overwriteTeam(id) {
-    commitTeams(teams.map(t => t.id === id
-      ? { ...t, savedAt: Date.now(), state: JSON.parse(JSON.stringify(stateRef.current)) }
-      : t))
+  async function saveCurrentAsTeam(name) {
+    const s = sessionRef.current
+    if (!supabase || !s) return
+    setTeamsBusy(true)
+    const { error } = await supabase.from('teams').insert({
+      user_id: s.user.id,
+      name: (name || '').trim() || `Team ${teams.length + 1}`,
+      state: snapshot(),
+    })
+    setTeamsBusy(false)
+    if (error) { window.alert('Could not save: ' + error.message); return }
+    fetchTeams()
+  }
+  async function overwriteTeam(id) {
+    if (!supabase) return
+    setTeamsBusy(true)
+    const { error } = await supabase.from('teams').update({ state: snapshot() }).eq('id', id)
+    setTeamsBusy(false)
+    if (error) { window.alert('Could not update: ' + error.message); return }
+    fetchTeams()
   }
   function loadTeam(id) {
     const t = teams.find(x => x.id === id)
@@ -871,12 +900,91 @@ export default function RinkRostersApp() {
     setState(mergeStateShape(t.state))
     setTeamsOpen(false)
   }
-  function renameTeam(id, name) {
-    commitTeams(teams.map(t => t.id === id ? { ...t, name: name.trim() || t.name } : t))
+  async function renameTeam(id, name) {
+    const nm = (name || '').trim()
+    if (!supabase || !nm) return
+    setTeamsBusy(true)
+    const { error } = await supabase.from('teams').update({ name: nm }).eq('id', id)
+    setTeamsBusy(false)
+    if (error) { window.alert('Could not rename: ' + error.message); return }
+    fetchTeams()
   }
-  function deleteTeam(id) {
-    commitTeams(teams.filter(t => t.id !== id))
+  async function deleteTeam(id) {
+    if (!supabase) return
+    setTeamsBusy(true)
+    const { error } = await supabase.from('teams').delete().eq('id', id)
+    setTeamsBusy(false)
+    if (error) { window.alert('Could not delete: ' + error.message); return }
+    fetchTeams()
   }
+
+  // ── Auth (magic link) ─────────────────────────────────────────────────────
+  async function sendMagicLink(email) {
+    const addr = (email || '').trim()
+    if (!supabase || !addr) return
+    setAuthBusy(true); setAuthMsg('')
+    const { error } = await supabase.auth.signInWithOtp({
+      email: addr,
+      options: { emailRedirectTo: window.location.origin },
+    })
+    setAuthBusy(false)
+    setAuthMsg(error ? ('Couldn’t send link: ' + error.message) : `Check ${addr} for a sign-in link.`)
+  }
+  async function signOut() {
+    if (!supabase) return
+    await supabase.auth.signOut()
+    setTeams([])
+  }
+  // One-time migration: lift any pre-cloud local snapshots into the account.
+  async function importLocalTeams() {
+    const s = sessionRef.current
+    if (!supabase || !s) return
+    const local = loadTeams()
+    if (local.length) {
+      setTeamsBusy(true)
+      const { error } = await supabase.from('teams').insert(
+        local.map(t => ({ user_id: s.user.id, name: t.name || 'Imported team', state: t.state }))
+      )
+      setTeamsBusy(false)
+      if (error) { window.alert('Import failed: ' + error.message); return }
+    }
+    try { localStorage.setItem(TEAMS_IMPORTED_KEY, '1') } catch {}
+    setLocalTeamsCount(0)
+    fetchTeams()
+  }
+  function skipLocalImport() {
+    try { localStorage.setItem(TEAMS_IMPORTED_KEY, '1') } catch {}
+    setLocalTeamsCount(0)
+  }
+
+  // Keep a ref to the live session so the async cloud helpers above read the
+  // current value rather than a stale closure.
+  const sessionRef = useRef(null)
+  useEffect(() => { sessionRef.current = session }, [session])
+
+  // Subscribe to Supabase auth once; mirror sign-in/out into `session`. The
+  // magic-link redirect lands back here and detectSessionInUrl resolves it.
+  useEffect(() => {
+    if (!supabase) return
+    supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null))
+    const { data: sub } = supabase.auth.onAuthStateChange((_evt, s) => setSession(s ?? null))
+    return () => sub.subscription.unsubscribe()
+  }, [])
+
+  // On sign-in pull the user's teams and note any pre-cloud local snapshots to
+  // offer for import; on sign-out clear the list.
+  useEffect(() => {
+    if (session) {
+      fetchTeams()
+      let n = 0
+      try { n = localStorage.getItem(TEAMS_IMPORTED_KEY) ? 0 : loadTeams().length } catch {}
+      setLocalTeamsCount(n)
+    } else {
+      setTeams([])
+      setLocalTeamsCount(0)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session && session.user && session.user.id])
 
   // ── PNG export ──────────────────────────────────────────────────────────
   // Pattern ported from FC-Roster: clone the live SVG, serialize, load via
@@ -1116,9 +1224,18 @@ export default function RinkRostersApp() {
       {/* Ice controls help */}
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
 
-      {/* My Teams (named local saves) — hidden pending account + Supabase sync */}
+      {/* My Teams — cloud saves behind magic-link sign-in (Supabase). */}
       {ENABLE_MY_TEAMS && teamsOpen && (
         <TeamsModal
+          session={session}
+          onSignIn={sendMagicLink}
+          onSignOut={signOut}
+          authBusy={authBusy}
+          authMsg={authMsg}
+          teamsBusy={teamsBusy}
+          localTeamsCount={localTeamsCount}
+          onImportLocal={importLocalTeams}
+          onSkipImport={skipLocalImport}
           teams={teams}
           rosterCount={roster.length}
           onSaveNew={saveCurrentAsTeam}
@@ -1951,24 +2068,63 @@ function fmtWhen(ts) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
     ' · ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
 }
-function TeamsModal({ teams, rosterCount, onSaveNew, onOverwrite, onLoad, onRename, onDelete, onClose }) {
+function TeamsModal({ session, onSignIn, onSignOut, authBusy, authMsg, teamsBusy, localTeamsCount, onImportLocal, onSkipImport,
+                     teams, rosterCount, onSaveNew, onOverwrite, onLoad, onRename, onDelete, onClose }) {
   const [name, setName] = useState('')
   const [renaming, setRenaming] = useState(null) // team id being renamed
   const [renameVal, setRenameVal] = useState('')
+  const [email, setEmail] = useState('')
   const btn = {
     padding: '6px 10px', fontSize: 12, fontWeight: 600,
     background: '#0b1118', color: '#cbd5e1', border: '1px solid #1f2937',
     borderRadius: 6, cursor: 'pointer',
   }
+  const userEmail = session?.user?.email || ''
   return (
     <div onMouseDown={onClose} onTouchStart={onClose}
       style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 }}>
       <div onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}
         style={{ ...GLASS_PANEL, borderRadius: 12, padding: 18, width: '100%', maxWidth: 440, maxHeight: '82vh', display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: '#cbd5e1' }}>My Teams</div>
+          <div style={{ fontFamily: DISPLAY_FONT, fontSize: 16, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: '#cbd5e1' }}>My Teams</div>
           <button onClick={onClose} style={{ ...btn, padding: '4px 8px' }}>✕</button>
         </div>
+
+        {!session ? (
+          /* ── Signed out: magic-link sign-in ─────────────────────────────── */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ fontSize: 13, color: '#cbd5e1', lineHeight: 1.5 }}>
+              Sign in to save your lineups to your account and sync them across devices. We’ll email you a one-tap sign-in link — no password.
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" inputMode="email" autoComplete="email"
+                placeholder="you@email.com"
+                onKeyDown={(e) => { if (e.key === 'Enter' && !authBusy) onSignIn(email) }}
+                style={{ flex: 1, padding: '9px 10px', background: '#0b1118', color: '#e2e8f0', border: '1px solid #1f2937', borderRadius: 6, fontSize: 13 }} />
+              <button onClick={() => onSignIn(email)} disabled={authBusy || !email.trim()}
+                style={{ padding: '9px 14px', background: '#4cc2ff', color: '#0b1118', border: 'none', borderRadius: 6, cursor: authBusy ? 'default' : 'pointer', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', opacity: (authBusy || !email.trim()) ? 0.6 : 1 }}>
+                {authBusy ? 'Sending…' : 'Email me a link'}
+              </button>
+            </div>
+            {authMsg && <div style={{ fontSize: 12, color: authMsg.startsWith('Check') ? '#86efac' : '#fca5a5' }}>{authMsg}</div>}
+            <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.5 }}>
+              Your current lineup is always saved on this device automatically — an account just adds named saves + cross-device sync.
+            </div>
+          </div>
+        ) : (
+        <>
+        {/* Import pre-cloud local snapshots, offered once. */}
+        {localTeamsCount > 0 && (
+          <div style={{ background: 'rgba(76,194,255,0.10)', border: '1px solid #1e3a8a', borderRadius: 8, padding: 10, marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: '#cbd5e1', marginBottom: 8 }}>
+              You have {localTeamsCount} lineup{localTeamsCount === 1 ? '' : 's'} saved on this device. Import {localTeamsCount === 1 ? 'it' : 'them'} into your account?
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button onClick={onImportLocal} disabled={teamsBusy} style={{ ...btn, color: '#4cc2ff', borderColor: '#1e3a8a' }}>Import</button>
+              <button onClick={onSkipImport} style={btn}>No thanks</button>
+            </div>
+          </div>
+        )}
 
         {/* Save current lineup */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
@@ -1976,20 +2132,20 @@ function TeamsModal({ teams, rosterCount, onSaveNew, onOverwrite, onLoad, onRena
             placeholder="Name this lineup…"
             onKeyDown={(e) => { if (e.key === 'Enter') { onSaveNew(name); setName('') } }}
             style={{ flex: 1, padding: '8px 10px', background: '#0b1118', color: '#e2e8f0', border: '1px solid #1f2937', borderRadius: 6, fontSize: 13 }} />
-          <button onClick={() => { onSaveNew(name); setName('') }}
-            style={{ padding: '8px 14px', background: '#0ea5e9', color: '#0b1118', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>
+          <button onClick={() => { onSaveNew(name); setName('') }} disabled={teamsBusy}
+            style={{ padding: '8px 14px', background: '#0ea5e9', color: '#0b1118', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', opacity: teamsBusy ? 0.6 : 1 }}>
             Save current
           </button>
         </div>
         <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10 }}>
-          Saves a snapshot of the current roster &amp; lines ({rosterCount} player{rosterCount === 1 ? '' : 's'}) to this device.
+          Saves a snapshot of the current roster &amp; lines ({rosterCount} player{rosterCount === 1 ? '' : 's'}) to your account.
         </div>
 
         {/* Saved teams list */}
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
           {teams.length === 0 ? (
             <div style={{ color: '#475569', fontSize: 12, padding: '10px 4px', lineHeight: 1.5 }}>
-              No saved teams yet. Build a lineup, then save it above to keep more than one roster on this device.
+              {teamsBusy ? 'Loading…' : 'No saved teams yet. Build a lineup, then save it above to keep more than one roster in your account.'}
             </div>
           ) : teams.map(t => (
             <div key={t.id} style={{ background: '#0e1722', border: '1px solid #1f2937', borderRadius: 8, padding: 10 }}>
@@ -2027,6 +2183,16 @@ function TeamsModal({ teams, rosterCount, onSaveNew, onOverwrite, onLoad, onRena
             </div>
           ))}
         </div>
+
+        {/* Footer: who's signed in + sign out */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 12, paddingTop: 10, borderTop: '1px solid #1f2937' }}>
+          <div style={{ fontSize: 11, color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+            Signed in as {userEmail}
+          </div>
+          <button onClick={onSignOut} style={{ ...btn, padding: '5px 10px', whiteSpace: 'nowrap' }}>Sign out</button>
+        </div>
+        </>
+        )}
       </div>
     </div>
   )
