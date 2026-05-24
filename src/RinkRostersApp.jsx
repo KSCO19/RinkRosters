@@ -913,7 +913,11 @@ export default function RinkRostersApp() {
     const blob = new Blob([xml], { type: 'image/svg+xml;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const img = new Image()
-    img.onload = () => {
+    img.onload = async () => {
+      // Make sure Oswald is ready before drawing the canvas header, so it renders
+      // in the display font (matching the on-screen wordmark) rather than a
+      // fallback. It's already used on-screen, so this resolves immediately.
+      try { await document.fonts.load("700 44px 'Oswald'"); await document.fonts.load("500 20px 'Oswald'") } catch {}
       const PAD = 24 * SCALE
       const HDR = 56 * SCALE
       const FTR = 36 * SCALE
@@ -939,11 +943,11 @@ export default function RinkRostersApp() {
       ctx.fillRect(0, 0, CW, HDR + PAD)
       ctx.textAlign = 'center'
       ctx.fillStyle = 'rgba(255,255,255,0.95)'
-      ctx.font = `bold ${18 * SCALE}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`
-      ctx.fillText('RINKROSTERS', CW / 2, PAD + 22 * SCALE)
+      ctx.font = `700 ${22 * SCALE}px 'Oswald', system-ui, -apple-system, sans-serif`
+      ctx.fillText('RINKROSTERS', CW / 2, PAD + 23 * SCALE)
       ctx.fillStyle = 'rgba(76,194,255,0.85)'
-      ctx.font = `${10 * SCALE}px system-ui, -apple-system, sans-serif`
-      ctx.fillText(viewLabel(view, format), CW / 2, PAD + 40 * SCALE)
+      ctx.font = `500 ${11 * SCALE}px 'Oswald', system-ui, -apple-system, sans-serif`
+      ctx.fillText(viewLabel(view, format), CW / 2, PAD + 42 * SCALE)
 
       // Rink — rotate the landscape image -90° for portrait, else draw it flat.
       const rinkX = PAD, rinkY = PAD + HDR
